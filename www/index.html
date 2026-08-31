@@ -57,6 +57,44 @@
         font-size: 1.75rem;
         font-weight: 800;
       }
+      .heat-grid {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        gap: 6px;
+      }
+      .heat-labels {
+        margin-bottom: 6px;
+      }
+      .heat-label {
+        text-align: center;
+        font-size: 0.72rem;
+        color: #9fb0d0;
+        text-transform: uppercase;
+      }
+      .heat-cell {
+        aspect-ratio: 1 / 1;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.72rem;
+        color: #eef3ff;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+      }
+      .heat-empty {
+        background: transparent;
+        border: none;
+      }
+      .heat-today {
+        outline: 2px solid #62d4ff;
+        outline-offset: -2px;
+      }
+      .heat-swatch {
+        width: 14px;
+        height: 14px;
+        border-radius: 4px;
+        display: inline-block;
+      }
     </style>
   </head>
   <body>
@@ -111,16 +149,78 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 
     <script>
       const STORAGE_KEY = "hybridTrainingSystem";
       const STORAGE_VERSION = 2;
+      const NATIVE_FILE = "hybrid-training-data.json";
+
+      // ===== ADAPTER DI PERSISTENZA (localStorage + Capacitor Filesystem) =====
+      // In un WebView "nudo" o nel browser, usiamo solo localStorage.
+      // Una volta impacchettata con Capacitor (npx cap add android/ios),
+      // il runtime nativo espone window.Capacitor: in quel caso scriviamo
+      // ANCHE un file JSON persistente nella sandbox dell'app (Directory.Data),
+      // molto più resiliente della sola cache WebView.
+      const NativeStorage = {
+        isNative() {
+          try {
+            return !!(
+              window.Capacitor &&
+              window.Capacitor.isNativePlatform &&
+              window.Capacitor.isNativePlatform() &&
+              window.Capacitor.Plugins &&
+              window.Capacitor.Plugins.Filesystem
+            );
+          } catch (e) {
+            return false;
+          }
+        },
+        async write(data) {
+          if (!this.isNative()) return false;
+          try {
+            const { Filesystem, Directory, Encoding } =
+              window.Capacitor.Plugins;
+            await Filesystem.writeFile({
+              path: NATIVE_FILE,
+              data: JSON.stringify(data),
+              directory: Directory.Data,
+              encoding: Encoding.UTF8,
+            });
+            return true;
+          } catch (e) {
+            console.error("NativeStorage write failed", e);
+            return false;
+          }
+        },
+        async read() {
+          if (!this.isNative()) return null;
+          try {
+            const { Filesystem, Directory, Encoding } =
+              window.Capacitor.Plugins;
+            const res = await Filesystem.readFile({
+              path: NATIVE_FILE,
+              directory: Directory.Data,
+              encoding: Encoding.UTF8,
+            });
+            return JSON.parse(res.data);
+          } catch (e) {
+            // il file potrebbe non esistere ancora al primo avvio: non è un errore
+            return null;
+          }
+        },
+      };
       const DEFAULT_STATE = {
         _storageVersion: STORAGE_VERSION,
         profile: null,
         assessment: null,
         meso: { week: 1, started: new Date().toISOString(), history: [] },
         sessions: {},
+        log: [],
+        statsView: {
+          year: new Date().getFullYear(),
+          month: new Date().getMonth(),
+        },
         timer: { mode: "rest", seconds: 0, running: false },
         activePage: "dashboard",
         settings: { dynamicAlert: true, sound: true },
@@ -146,6 +246,8 @@
             meso: { ...DEFAULT_STATE.meso, ...(p.meso || {}) },
             timer: { ...DEFAULT_STATE.timer, ...(p.timer || {}) },
             settings: { ...DEFAULT_STATE.settings, ...(p.settings || {}) },
+            log: Array.isArray(p.log) ? p.log : [],
+            statsView: { ...DEFAULT_STATE.statsView, ...(p.statsView || {}) },
           };
         } catch (e) {
           console.warn("localStorage read failed", e);
@@ -370,6 +472,183 @@
         ["Polso/Gomito", "Quadruped Wrist Rocks / eccentriche", "2–3×12–15"],
       ];
 
+      // ===== PROGRAMMA DI CORSA =====
+      const RUN_ZONES = [
+        {
+          z: "Zona 1",
+          range: "50–60% FC max",
+          name: "Recupero",
+          desc: "Recupero attivo e capillarizzazione. Intensità molto bassa, conversazione fluida.",
+          badge: "border-info text-info",
+        },
+        {
+          z: "Zona 2",
+          range: "60–70% FC max",
+          name: "Base Aerobica",
+          desc: "Zona fondamentale per l'efficienza aerobica e la capacità di bruciare grassi.",
+          badge: "border-success text-success",
+        },
+        {
+          z: "Zona 3",
+          range: "70–80% FC max",
+          name: "Sforzo Moderato-Duro",
+          desc: "Allena la resistenza alla fatica e la transizione aerobica-anaerobica.",
+          badge: "border-warning text-warning",
+        },
+        {
+          z: "Zona 4",
+          range: "80–90%+ FC max",
+          name: "Soglia / VO₂max",
+          desc: "Migliora la potenza aerobica massima e la soglia del lattato.",
+          badge: "border-danger text-danger",
+        },
+      ];
+
+      const RUN_SESSIONS = [
+        {
+          day: "Martedì e Giovedì",
+          title: "Easy Run",
+          zone: "Zona 1",
+          duration: "35–40 min",
+          icon: "bi-wind",
+          desc: "Eseguite dopo la sessione di forza. Servono ad accumulare volume aerobico a basso costo di recupero, senza interferire con il lavoro neuromuscolare del giorno.",
+        },
+        {
+          day: "Mercoledì",
+          title: "Interval Run",
+          zone: "Zona 4",
+          duration: "≈30 min totali",
+          icon: "bi-lightning-charge",
+          desc: "L'allenamento più intenso della settimana. Struttura tipica: 6 × 1 minuto in Z4 con 2 minuti di recupero in Z2, per massimizzare il VO₂max.",
+        },
+        {
+          day: "Venerdì",
+          title: "Corsa Progressiva",
+          zone: "Z1 → Z3",
+          duration: "45 min",
+          icon: "bi-graph-up-arrow",
+          desc: "Il ritmo aumenta fluidamente durante la sessione. Allena la capacità di reggere intensità crescenti su gambe già affaticate dalla settimana di forza.",
+        },
+        {
+          day: "Sabato",
+          title: "Recupero Attivo",
+          zone: "Zona 1",
+          duration: "35–40 min",
+          icon: "bi-arrow-repeat",
+          desc: "Corsa molto facile (RPE 3–4) per smaltire la fatica accumulata durante la settimana, senza aggiungere stimolo allenante significativo.",
+        },
+        {
+          day: "Domenica",
+          title: "Long Run",
+          zone: "Zona 2",
+          duration: "70–90 min",
+          icon: "bi-map",
+          desc: "Lo stimolo aerobico più importante della settimana. Costruisce la base di resistenza e la capacità di utilizzare i grassi come substrato su lunga durata.",
+        },
+      ];
+
+      const RUN_MECHANICS = [
+        {
+          title: "Cadenza",
+          icon: "bi-speedometer",
+          desc: "Range target 170–180 passi al minuto, per ridurre l'impatto su ginocchia e anche (overstriding).",
+        },
+        {
+          title: "Postura",
+          icon: "bi-person-arms-up",
+          desc: "Busto leggermente inclinato in avanti dalla caviglia, sguardo all'orizzonte, core attivo.",
+        },
+        {
+          title: "Appoggio",
+          icon: "bi-shoe-heel",
+          desc: "Non forzare l'avampiede: lavorare sulla cadenza normalizza naturalmente il punto di contatto al suolo.",
+        },
+      ];
+
+      const RUN_PROGRESSION = [
+        {
+          title: "Regola del 10%",
+          icon: "bi-graph-up",
+          color: "text-info",
+          desc: "Non aumentare il volume settimanale totale di corsa oltre il 10% rispetto alla settimana precedente.",
+        },
+        {
+          title: "Cutback Week",
+          icon: "bi-arrow-down-circle",
+          color: "text-warning",
+          desc: "Ogni 4 settimane (settimana di Scarico del mesociclo) il volume di corsa scende del 20–30% per favorire il recupero sistemico.",
+        },
+        {
+          title: "Leve del Volume",
+          icon: "bi-sliders",
+          color: "text-success",
+          desc: "Ordine di priorità per aumentare il carico: 1) allungare il Long Run domenicale, 2) allungare le corse facili, 3) solo infine aumentare l'intensità delle sessioni di qualità.",
+        },
+      ];
+
+      // ===== RECUPERO FISICO =====
+      const RECOVERY_NUTRITION = [
+        {
+          title: "Carboidrati — giorni normali",
+          icon: "bi-egg-fried",
+          value: "3–6 g/kg/die",
+          desc: "Quota giornaliera essenziale per sostenere le sessioni in Zona 4 e il recupero tra gli allenamenti.",
+        },
+        {
+          title: "Carboidrati — Long Run",
+          icon: "bi-battery-charging",
+          value: "fino a 8 g/kg/die",
+          desc: "Nei giorni con Long Run domenicale il fabbisogno di carboidrati aumenta per garantire glicogeno sufficiente.",
+        },
+        {
+          title: "Sodio in corsa lunga",
+          icon: "bi-droplet-half",
+          value: "300–700 mg/ora",
+          desc: "Obbligatorio integrare sodio per corse oltre 75–90 minuti, per prevenire crampi e iponatriemia.",
+        },
+      ];
+
+      const RECOVERY_MONITORING = [
+        {
+          title: "Frequenza Cardiaca a Riposo (FCR)",
+          icon: "bi-heart-pulse",
+          desc: "Misurata al risveglio. Un aumento persistente rispetto alla propria baseline è un segnale precoce di stress accumulato o recupero incompleto.",
+        },
+        {
+          title: "HRV (Variabilità della Frequenza Cardiaca)",
+          icon: "bi-activity",
+          desc: "Un HRV in calo per più giorni consecutivi suggerisce di ridurre l'intensità e privilegiare sessioni in Zona 1–2 fino al ripristino dei valori normali.",
+        },
+        {
+          title: "Overreaching",
+          icon: "bi-exclamation-diamond",
+          desc: "Il monitoraggio combinato di FCR e HRV aiuta a distinguere la normale fatica da allenamento da un sovraccarico che richiede scarico immediato.",
+        },
+      ];
+
+      const RECOVERY_PRINCIPLES = [
+        {
+          title: "Sonno",
+          icon: "bi-moon-stars",
+          desc: "È la leva di recupero più potente a disposizione: priorità a orari regolari e durata sufficiente, soprattutto nelle settimane di Picco.",
+        },
+        {
+          title: "Recupero Attivo",
+          icon: "bi-arrow-repeat",
+          desc: "Il Sabato in Zona 1 non è un giorno 'perso': favorisce il flusso sanguigno e smaltisce metaboliti senza creare nuovo stress.",
+        },
+        {
+          title: "Stretching & Mobilità",
+          icon: "bi-bandaid",
+          desc: "Dinamico prima (warm-up), statico dopo (cool-down): vedi il modulo Prevenzione per i dettagli tecnici.",
+        },
+        {
+          title: "Cutback Week",
+          icon: "bi-battery-half",
+          desc: "La riduzione di volume del 20–30% nella settimana 4 del mesociclo è parte integrante della programmazione, non un'eccezione.",
+        },
+      ];
+
       function save() {
         state._storageVersion = STORAGE_VERSION;
         state.lastSavedAt = new Date().toISOString();
@@ -379,6 +658,12 @@
         } catch (e) {
           console.error(e);
           updateSaveIndicator("error");
+        }
+        // scrittura nativa asincrona, non blocca l'interfaccia
+        if (NativeStorage.isNative()) {
+          NativeStorage.write(state).catch((e) =>
+            console.error("Errore salvataggio nativo", e),
+          );
         }
         updateMini();
       }
@@ -432,6 +717,176 @@
         return 0;
       }
 
+      // ===== LOG ATTIVITÀ / STREAK / STATISTICHE =====
+      function todayKey(d) {
+        const dt = d || new Date();
+        return (
+          dt.getFullYear() +
+          "-" +
+          String(dt.getMonth() + 1).padStart(2, "0") +
+          "-" +
+          String(dt.getDate()).padStart(2, "0")
+        );
+      }
+
+      function addLog(type, label, meta) {
+        state.log.push({
+          date: todayKey(),
+          type, // 'strength' | 'run'
+          label: label || "",
+          meta: meta || null,
+          at: new Date().toISOString(),
+        });
+        save();
+      }
+
+      function logRun(category, dayLabel) {
+        addLog("run", category, { day: dayLabel });
+        toast(`Corsa registrata: ${category}`);
+        if (state.activePage === "corsa") render();
+      }
+
+      function toast(msg) {
+        const el = document.createElement("div");
+        el.className =
+          "toast align-items-center text-bg-success border-0 position-fixed bottom-0 end-0 m-3 show";
+        el.style.zIndex = 2000;
+        el.innerHTML = `<div class="d-flex"><div class="toast-body"><i class="bi bi-check-circle me-2"></i>${esc(msg)}</div></div>`;
+        document.body.appendChild(el);
+        setTimeout(() => el.remove(), 2200);
+      }
+
+      function logDatesSet() {
+        const map = {};
+        state.log.forEach((l) => {
+          map[l.date] = (map[l.date] || 0) + 1;
+        });
+        // include legacy strength sessions saved before logging existed
+        Object.values(state.sessions).forEach((s) => {
+          if (!s.at) return;
+          const k = todayKey(new Date(s.at));
+          const alreadyCounted = state.log.some(
+            (l) => l.date === k && l.type === "strength" && l.label === s.name,
+          );
+          if (!alreadyCounted) map[k] = (map[k] || 0) + 1;
+        });
+        return map;
+      }
+
+      function computeStreaks() {
+        const map = logDatesSet();
+        const days = Object.keys(map).sort();
+        if (!days.length) return { current: 0, best: 0 };
+
+        let best = 1,
+          run = 1;
+        for (let i = 1; i < days.length; i++) {
+          const prev = new Date(days[i - 1]);
+          const cur = new Date(days[i]);
+          const diff = Math.round((cur - prev) / 86400000);
+          if (diff === 1) {
+            run++;
+          } else if (diff > 1) {
+            run = 1;
+          }
+          best = Math.max(best, run);
+        }
+
+        // current streak: walk backwards from today (or yesterday, to allow "not yet trained today")
+        let current = 0;
+        let cursor = new Date();
+        cursor.setHours(0, 0, 0, 0);
+        if (!map[todayKey(cursor)]) {
+          cursor.setDate(cursor.getDate() - 1);
+        }
+        while (map[todayKey(cursor)]) {
+          current++;
+          cursor.setDate(cursor.getDate() - 1);
+        }
+        return { current, best };
+      }
+
+      function sessionsByWeek(nWeeks) {
+        const map = logDatesSet();
+        const labels = [],
+          values = [];
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
+        for (let w = nWeeks - 1; w >= 0; w--) {
+          const start = new Date(now);
+          start.setDate(start.getDate() - start.getDay() - 7 * w + 1);
+          let count = 0;
+          for (let d = 0; d < 7; d++) {
+            const dd = new Date(start);
+            dd.setDate(start.getDate() + d);
+            count += map[todayKey(dd)] || 0;
+          }
+          labels.push(
+            start.toLocaleDateString("it-IT", {
+              day: "2-digit",
+              month: "2-digit",
+            }),
+          );
+          values.push(count);
+        }
+        return { labels, values };
+      }
+
+      function countsByType() {
+        let strength = 0,
+          run = 0;
+        state.log.forEach((l) => {
+          if (l.type === "strength") strength++;
+          else if (l.type === "run") run++;
+        });
+        Object.values(state.sessions).forEach((s) => {
+          const k = todayKey(new Date(s.at || Date.now()));
+          const alreadyCounted = state.log.some(
+            (l) => l.date === k && l.type === "strength" && l.label === s.name,
+          );
+          if (!alreadyCounted) strength++;
+        });
+        return { strength, run };
+      }
+
+      function weeklyAvgRpe(nWeeks) {
+        const buckets = {};
+        Object.entries(state.sessions).forEach(([k, v]) => {
+          if (!v.at || !v.sets?.length) return;
+          const d = new Date(v.at);
+          const start = new Date(d);
+          start.setDate(d.getDate() - d.getDay() + 1);
+          const wk = todayKey(start);
+          const rpes = v.sets.map((s) => +s.rpe).filter(Boolean);
+          if (!rpes.length) return;
+          if (!buckets[wk]) buckets[wk] = [];
+          buckets[wk].push(...rpes);
+        });
+        const keys = Object.keys(buckets).sort().slice(-nWeeks);
+        return {
+          labels: keys.map((k) =>
+            new Date(k).toLocaleDateString("it-IT", {
+              day: "2-digit",
+              month: "2-digit",
+            }),
+          ),
+          values: keys.map((k) => {
+            const arr = buckets[k];
+            return +(arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(1);
+          }),
+        };
+      }
+
+      function monthSessionsCount(year, month) {
+        const map = logDatesSet();
+        let total = 0;
+        Object.entries(map).forEach(([k, v]) => {
+          const d = new Date(k);
+          if (d.getFullYear() === year && d.getMonth() === month) total += v;
+        });
+        return total;
+      }
+
       function route(page) {
         state.activePage = page;
         save();
@@ -460,10 +915,17 @@
           { id: "assessment", label: "Assessment", icon: "clipboard-check" },
           { id: "mesociclo", label: "Mesociclo", icon: "calendar3" },
           { id: "workout", label: "Allenamento", icon: "lightning-charge" },
+          { id: "statistiche", label: "Statistiche", icon: "bar-chart-line" },
           { id: "cardio", label: "Cardio & Zone", icon: "heart-pulse" },
+          { id: "corsa", label: "Programma Corsa", icon: "map" },
           { id: "library", label: "Libreria", icon: "journal-bookmark" },
           { id: "core", label: "Core", icon: "shield-shaded" },
           { id: "prevenzione", label: "Prevenzione", icon: "bandaid" },
+          {
+            id: "recupero",
+            label: "Recupero Fisico",
+            icon: "battery-charging",
+          },
           { id: "retest", label: "Re-test", icon: "arrow-repeat" },
           { id: "settings", label: "Impostazioni", icon: "gear" },
         ];
@@ -483,10 +945,13 @@
           assessment: () => assessHTML() + scoreCard(),
           mesociclo,
           workout,
+          statistiche,
           cardio,
+          corsa: corsaPage,
           library,
           core: corePage,
           prevenzione,
+          recupero: recuperoPage,
           retest,
           settings,
         };
@@ -494,6 +959,9 @@
         const view = views[state.activePage] || dashboard;
         document.getElementById("app").innerHTML = view();
         updateMini();
+        if (state.activePage === "statistiche") {
+          setTimeout(renderStatsCharts, 50);
+        }
       }
 
       function updateMini() {
@@ -529,6 +997,7 @@
         const promotion = state.meso.history.some(
           (h) => h.week === 3 && h.avgRpe < 7,
         );
+        const streaks = computeStreaks();
 
         return (
           pageHead("Dashboard", "Panoramica del ciclo corrente") +
@@ -558,10 +1027,10 @@
       </div>
     </div>
     <div class="col-12 col-sm-6 col-xl-3">
-      <div class="card card-custom p-3 h-100">
-        <span class="text-secondary small text-uppercase">Sessioni Completate</span>
-        <div class="metric-val text-white my-1">${sdone}</div>
-        <span class="text-secondary small">nel microciclo corrente</span>
+      <div class="card card-custom p-3 h-100" role="button" onclick="route('statistiche')">
+        <span class="text-secondary small text-uppercase">Streak Allenamenti</span>
+        <div class="metric-val text-white my-1"><i class="bi bi-fire text-warning me-1"></i>${streaks.current}</div>
+        <span class="text-secondary small">record: ${streaks.best} gg · vedi Statistiche <i class="bi bi-arrow-right"></i></span>
       </div>
     </div>
   </div>
@@ -956,7 +1425,7 @@
           .filter((s) => s.rpe > 0 || s.reps > 0);
 
         state.sessions[key] = { name, sets, at: new Date().toISOString() };
-        save();
+        addLog("strength", name, { key });
 
         const hasRpe10 = sets.some((s) => s.rpe >= 10);
         const recurring = Object.values(state.sessions).some(
@@ -1069,6 +1538,405 @@
       )
       .join("")}
   </div>`;
+      }
+
+      function statistiche() {
+        const { current, best } = computeStreaks();
+        const totalSessions =
+          state.log.length +
+          Object.values(state.sessions).length -
+          Object.values(state.sessions).filter((s) =>
+            state.log.some((l) => l.type === "strength" && l.label === s.name),
+          ).length;
+        const monthCount = monthSessionsCount(
+          state.statsView.year,
+          state.statsView.month,
+        );
+
+        const streakBadge =
+          current >= 7
+            ? "bg-danger"
+            : current >= 3
+              ? "bg-warning text-dark"
+              : "bg-secondary";
+
+        return (
+          pageHead(
+            "Statistiche & Progressi",
+            "Streak, heatmap mensile e andamento allenamenti",
+          ) +
+          `
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-sm-6 col-xl-3">
+      <div class="card card-custom p-3 h-100">
+        <span class="text-secondary small text-uppercase">Streak Corrente</span>
+        <div class="d-flex align-items-center gap-2 my-1">
+          <span class="metric-val text-white">${current}</span>
+          <span class="badge ${streakBadge}"><i class="bi bi-fire"></i> ${current === 0 ? "Riparti oggi" : current + "gg consecutivi"}</span>
+        </div>
+        <span class="text-secondary small">giorni di fila con almeno una sessione</span>
+      </div>
+    </div>
+    <div class="col-12 col-sm-6 col-xl-3">
+      <div class="card card-custom p-3 h-100">
+        <span class="text-secondary small text-uppercase">Record Streak</span>
+        <div class="metric-val text-warning my-1"><i class="bi bi-trophy-fill me-1"></i>${best}</div>
+        <span class="text-secondary small">miglior striscia mai raggiunta</span>
+      </div>
+    </div>
+    <div class="col-12 col-sm-6 col-xl-3">
+      <div class="card card-custom p-3 h-100">
+        <span class="text-secondary small text-uppercase">Sessioni Totali</span>
+        <div class="metric-val text-info my-1">${totalSessions}</div>
+        <span class="text-secondary small">forza + corsa, da sempre</span>
+      </div>
+    </div>
+    <div class="col-12 col-sm-6 col-xl-3">
+      <div class="card card-custom p-3 h-100">
+        <span class="text-secondary small text-uppercase">Questo Mese</span>
+        <div class="metric-val text-success my-1">${monthCount}</div>
+        <span class="text-secondary small">sessioni registrate nel mese</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card card-custom p-4 mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+      <h5 class="mb-0"><i class="bi bi-calendar3-week me-1"></i> Heatmap Mensile</h5>
+      <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-sm btn-outline-light" onclick="shiftStatsMonth(-1)"><i class="bi bi-chevron-left"></i></button>
+        <span class="fw-bold text-light">${monthLabel(state.statsView.year, state.statsView.month)}</span>
+        <button class="btn btn-sm btn-outline-light" onclick="shiftStatsMonth(1)"><i class="bi bi-chevron-right"></i></button>
+      </div>
+    </div>
+    ${heatmapHTML(state.statsView.year, state.statsView.month)}
+    <div class="d-flex align-items-center gap-2 mt-3 small text-secondary">
+      <span>Meno</span>
+      <span class="heat-swatch" style="background:rgba(98,212,255,.08)"></span>
+      <span class="heat-swatch" style="background:rgba(98,212,255,.35)"></span>
+      <span class="heat-swatch" style="background:rgba(98,212,255,.6)"></span>
+      <span class="heat-swatch" style="background:rgba(98,212,255,.9)"></span>
+      <span>Più</span>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-12 col-lg-6">
+      <div class="card card-custom p-3 h-100">
+        <h6 class="mb-3"><i class="bi bi-graph-up me-1"></i> Sessioni per Settimana (10 sett.)</h6>
+        <canvas id="chartWeekly" height="200"></canvas>
+      </div>
+    </div>
+    <div class="col-12 col-lg-6">
+      <div class="card card-custom p-3 h-100">
+        <h6 class="mb-3"><i class="bi bi-pie-chart me-1"></i> Forza vs Corsa</h6>
+        <canvas id="chartType" height="200"></canvas>
+      </div>
+    </div>
+    <div class="col-12">
+      <div class="card card-custom p-3 h-100">
+        <h6 class="mb-3"><i class="bi bi-activity me-1"></i> RPE Medio Settimanale (Forza)</h6>
+        <canvas id="chartRpe" height="120"></canvas>
+      </div>
+    </div>
+  </div>`
+        );
+      }
+
+      function monthLabel(year, month) {
+        return new Date(year, month, 1)
+          .toLocaleDateString("it-IT", { month: "long", year: "numeric" })
+          .replace(/^./, (c) => c.toUpperCase());
+      }
+
+      function shiftStatsMonth(delta) {
+        let m = state.statsView.month + delta;
+        let y = state.statsView.year;
+        if (m < 0) {
+          m = 11;
+          y--;
+        } else if (m > 11) {
+          m = 0;
+          y++;
+        }
+        state.statsView = { year: y, month: m };
+        save();
+        render();
+      }
+
+      function heatmapHTML(year, month) {
+        const map = logDatesSet();
+        const first = new Date(year, month, 1);
+        const startOffset = (first.getDay() + 6) % 7; // lunedì = 0
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        const todayK = todayKey();
+
+        const cells = [];
+        for (let i = 0; i < startOffset; i++) {
+          cells.push(`<div class="heat-cell heat-empty"></div>`);
+        }
+        for (let d = 1; d <= daysInMonth; d++) {
+          const dateObj = new Date(year, month, d);
+          const k = todayKey(dateObj);
+          const count = map[k] || 0;
+          const alpha =
+            count === 0 ? 0.06 : count === 1 ? 0.35 : count === 2 ? 0.6 : 0.9;
+          const isToday = k === todayK ? "heat-today" : "";
+          cells.push(
+            `<div class="heat-cell ${isToday}" style="background:rgba(98,212,255,${alpha})" title="${k} · ${count} sessione/i">${d}</div>`,
+          );
+        }
+
+        return `
+  <div class="heat-grid heat-labels">
+    ${["L", "M", "M", "G", "V", "S", "D"].map((d) => `<div class="heat-label">${d}</div>`).join("")}
+  </div>
+  <div class="heat-grid">
+    ${cells.join("")}
+  </div>`;
+      }
+
+      let statsCharts = {};
+      function renderStatsCharts() {
+        if (typeof Chart === "undefined") return;
+        Object.values(statsCharts).forEach((c) => c && c.destroy());
+        statsCharts = {};
+
+        const weekly = sessionsByWeek(10);
+        const cw = document.getElementById("chartWeekly");
+        if (cw) {
+          statsCharts.weekly = new Chart(cw, {
+            type: "line",
+            data: {
+              labels: weekly.labels,
+              datasets: [
+                {
+                  label: "Sessioni",
+                  data: weekly.values,
+                  borderColor: "#62d4ff",
+                  backgroundColor: "rgba(98,212,255,.15)",
+                  fill: true,
+                  tension: 0.35,
+                  pointRadius: 3,
+                },
+              ],
+            },
+            options: {
+              plugins: { legend: { display: false } },
+              scales: {
+                x: { ticks: { color: "#9fb0d0" }, grid: { color: "#22304f" } },
+                y: {
+                  ticks: { color: "#9fb0d0", precision: 0 },
+                  grid: { color: "#22304f" },
+                  beginAtZero: true,
+                },
+              },
+            },
+          });
+        }
+
+        const types = countsByType();
+        const ct = document.getElementById("chartType");
+        if (ct) {
+          statsCharts.type = new Chart(ct, {
+            type: "doughnut",
+            data: {
+              labels: ["Forza", "Corsa"],
+              datasets: [
+                {
+                  data: [types.strength, types.run],
+                  backgroundColor: ["#62d4ff", "#ffb454"],
+                  borderColor: "#121a2d",
+                },
+              ],
+            },
+            options: {
+              plugins: { legend: { labels: { color: "#eef3ff" } } },
+            },
+          });
+        }
+
+        const rpe = weeklyAvgRpe(10);
+        const cr = document.getElementById("chartRpe");
+        if (cr) {
+          statsCharts.rpe = new Chart(cr, {
+            type: "bar",
+            data: {
+              labels: rpe.labels,
+              datasets: [
+                {
+                  label: "RPE medio",
+                  data: rpe.values,
+                  backgroundColor: "#ff8fa3",
+                },
+              ],
+            },
+            options: {
+              plugins: { legend: { display: false } },
+              scales: {
+                x: { ticks: { color: "#9fb0d0" }, grid: { color: "#22304f" } },
+                y: {
+                  min: 0,
+                  max: 10,
+                  ticks: { color: "#9fb0d0" },
+                  grid: { color: "#22304f" },
+                },
+              },
+            },
+          });
+        }
+      }
+
+      function corsaPage() {
+        return (
+          pageHead(
+            "Programma di Corsa",
+            "Modello polarizzato 80/20 · integrato con la forza a corpo libero",
+          ) +
+          `
+  <div class="alert alert-info border-0 bg-info bg-opacity-10 text-info mb-4">
+    <i class="bi bi-info-circle-fill me-2"></i>Filosofia <strong>80/20</strong>: l'80% del volume settimanale è a bassa intensità (Z1–Z2), solo il 20% è dedicato a stimoli realmente duri (Z3–Z4).
+  </div>
+
+  <h5 class="mb-3"><i class="bi bi-heart-pulse me-1"></i> Zone di Intensità</h5>
+  <div class="row g-3 mb-4">
+    ${RUN_ZONES.map(
+      (z) => `
+      <div class="col-12 col-sm-6 col-md-3">
+        <div class="card card-custom p-3 h-100 border ${z.badge}">
+          <span class="fw-bold">${z.z} · ${z.name}</span>
+          <div class="metric-val fs-5 mt-2 text-light">${z.range}</div>
+          <p class="text-secondary small mb-0 mt-2">${z.desc}</p>
+        </div>
+      </div>
+    `,
+    ).join("")}
+  </div>
+
+  <h5 class="mb-3"><i class="bi bi-calendar-week me-1"></i> Struttura Settimanale · 5 Sessioni</h5>
+  <div class="row g-3 mb-4">
+    ${RUN_SESSIONS.map(
+      (s, i) => `
+      <div class="col-12 col-md-6">
+        <div class="card card-custom p-3 h-100">
+          <div class="d-flex justify-content-between align-items-start mb-2">
+            <span class="badge bg-secondary">${s.day}</span>
+            <span class="badge bg-dark border text-light">${s.zone}</span>
+          </div>
+          <h6 class="fw-bold text-light mb-1"><i class="bi ${s.icon} me-1 text-info"></i> ${s.title}</h6>
+          <span class="text-info small mb-2 d-block"><i class="bi bi-clock"></i> ${s.duration}</span>
+          <p class="text-secondary small mb-3">${s.desc}</p>
+          <button class="btn btn-sm btn-outline-success mt-auto align-self-start" onclick="logRun('${s.title.replace(/'/g, "\\'")}', '${s.day.replace(/'/g, "\\'")}')">
+            <i class="bi bi-check2-circle me-1"></i> Segna come completata
+          </button>
+        </div>
+      </div>
+    `,
+    ).join("")}
+  </div>
+
+  <div class="card card-custom p-4 mb-4">
+    <h5 class="mb-3"><i class="bi bi-arrow-left-right me-1"></i> Integrazione Forza-Corsa</h5>
+    <div class="row g-3">
+      <div class="col-12 col-md-6">
+        <div class="p-3 border rounded-3 bg-dark bg-opacity-25 h-100">
+          <strong class="text-info">Sequenza</strong>
+          <p class="text-secondary small mb-0 mt-1">Nei giorni con doppia sessione, la forza va eseguita prima della corsa: preserva la qualità tecnica di squat e push-up, lasciando che la corsa in Z1 successiva "assorba" la fatica residua.</p>
+        </div>
+      </div>
+      <div class="col-12 col-md-6">
+        <div class="p-3 border rounded-3 bg-dark bg-opacity-25 h-100">
+          <strong class="text-warning">Recupero Neuromuscolare</strong>
+          <p class="text-secondary small mb-0 mt-1">Il mercoledì è dedicato esclusivamente alla corsa intensa, per permettere al sistema neuromuscolare di recuperare dagli stimoli di forza.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h5 class="mb-3"><i class="bi bi-person-walking me-1"></i> Meccanica e Tecnica di Corsa</h5>
+  <div class="row g-3 mb-4">
+    ${RUN_MECHANICS.map(
+      (m) => `
+      <div class="col-12 col-md-4">
+        <div class="card card-custom p-3 h-100">
+          <strong class="text-light"><i class="bi ${m.icon} me-1 text-info"></i> ${m.title}</strong>
+          <p class="text-secondary small mb-0 mt-2">${m.desc}</p>
+        </div>
+      </div>
+    `,
+    ).join("")}
+  </div>
+
+  <h5 class="mb-3"><i class="bi bi-graph-up me-1"></i> Progressione e Scarico</h5>
+  <div class="row g-3">
+    ${RUN_PROGRESSION.map(
+      (r) => `
+      <div class="col-12 col-md-4">
+        <div class="card card-custom p-3 h-100">
+          <strong class="${r.color}"><i class="bi ${r.icon} me-1"></i> ${r.title}</strong>
+          <p class="text-secondary small mb-0 mt-2">${r.desc}</p>
+        </div>
+      </div>
+    `,
+    ).join("")}
+  </div>`
+        );
+      }
+
+      function recuperoPage() {
+        return (
+          pageHead(
+            "Recupero Fisico",
+            "Nutrizione, monitoraggio e principi di recupero sistemico",
+          ) +
+          `
+  <h5 class="mb-3"><i class="bi bi-egg-fried me-1"></i> Supporto Nutrizionale</h5>
+  <div class="row g-3 mb-4">
+    ${RECOVERY_NUTRITION.map(
+      (n) => `
+      <div class="col-12 col-md-4">
+        <div class="card card-custom p-3 h-100">
+          <span class="text-secondary small text-uppercase"><i class="bi ${n.icon} me-1"></i> ${n.title}</span>
+          <div class="metric-val fs-4 text-info my-1">${n.value}</div>
+          <p class="text-secondary small mb-0">${n.desc}</p>
+        </div>
+      </div>
+    `,
+    ).join("")}
+  </div>
+
+  <h5 class="mb-3"><i class="bi bi-activity me-1"></i> Monitoraggio del Recupero</h5>
+  <div class="row g-3 mb-4">
+    ${RECOVERY_MONITORING.map(
+      (m) => `
+      <div class="col-12 col-md-4">
+        <div class="card card-custom p-3 h-100">
+          <strong class="text-light"><i class="bi ${m.icon} me-1 text-danger"></i> ${m.title}</strong>
+          <p class="text-secondary small mb-0 mt-2">${m.desc}</p>
+        </div>
+      </div>
+    `,
+    ).join("")}
+  </div>
+
+  <h5 class="mb-3"><i class="bi bi-battery-charging me-1"></i> Principi Generali di Recupero</h5>
+  <div class="row g-3 mb-4">
+    ${RECOVERY_PRINCIPLES.map(
+      (p) => `
+      <div class="col-12 col-sm-6 col-md-3">
+        <div class="card card-custom p-3 h-100">
+          <strong class="text-light"><i class="bi ${p.icon} me-1 text-success"></i> ${p.title}</strong>
+          <p class="text-secondary small mb-0 mt-2">${p.desc}</p>
+        </div>
+      </div>
+    `,
+    ).join("")}
+  </div>
+
+  <div class="alert alert-secondary border-0 bg-dark text-secondary mb-0">
+    <i class="bi bi-lightbulb me-1"></i> Regola pratica: se FCR e HRV segnalano stress accumulato, privilegia le sessioni in Zona 1–2 e valuta di anticipare mentalmente la prossima Cutback Week, anche se non ancora prevista dal calendario del mesociclo.
+  </div>`
+        );
       }
 
       function zoneAlert() {
@@ -1435,6 +2303,36 @@
 
       render();
       updateSaveIndicator("ok");
+      hydrateFromNativeStorage();
+
+      async function hydrateFromNativeStorage() {
+        if (!NativeStorage.isNative()) return;
+        try {
+          const native = await NativeStorage.read();
+          if (native && native.lastSavedAt) {
+            // il file nativo è la fonte di verità più duratura: se più
+            // recente (o se localStorage è vuoto/più vecchio) lo adottiamo
+            const localTime = state.lastSavedAt
+              ? new Date(state.lastSavedAt).getTime()
+              : 0;
+            const nativeTime = new Date(native.lastSavedAt).getTime();
+            if (nativeTime >= localTime) {
+              Object.keys(DEFAULT_STATE).forEach((k) => delete state[k]);
+              Object.assign(state, clone(DEFAULT_STATE), native, {
+                _storageVersion: STORAGE_VERSION,
+              });
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+              render();
+            }
+          } else if (state.lastSavedAt) {
+            // primo avvio nativo: non c'è ancora il file, lo creiamo dai
+            // dati locali esistenti così da avere subito una copia persistente
+            NativeStorage.write(state).catch(() => {});
+          }
+        } catch (e) {
+          console.error("Hydration da storage nativo fallita", e);
+        }
+      }
     </script>
   </body>
 </html>
