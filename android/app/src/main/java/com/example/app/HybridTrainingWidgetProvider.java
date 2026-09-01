@@ -9,14 +9,13 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.widget.RemoteViews;
 
-import org.json.JSONObject;
-
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Locale;
 
+/** Home-screen widget for today's training. */
 public class HybridTrainingWidgetProvider extends AppWidgetProvider {
-    private static final String ACTION_OPEN_APP = "com.example.app.widget.OPEN_APP";
+    public static final String ACTION_OPEN_APP = "com.example.app.widget.OPEN_APP";
     private static final String STATE_PREFS = "hybrid_training_widget";
     private static final String STATE_KEY = "state";
 
@@ -27,7 +26,9 @@ public class HybridTrainingWidgetProvider extends AppWidgetProvider {
 
     @Override
     public void onUpdate(Context context, AppWidgetManager manager, int[] ids) {
-        for (int id : ids) updateWidget(context, manager, id);
+        for (int id : ids) {
+            updateWidget(context, manager, id);
+        }
     }
 
     @Override
@@ -47,73 +48,48 @@ public class HybridTrainingWidgetProvider extends AppWidgetProvider {
     }
 
     public static void updateAllWidgets(Context context) {
-        AppWidgetManager manager = AppWidgetManager.getInstance(context);
-        ComponentName provider = new ComponentName(context, HybridTrainingWidgetProvider.class);
-        for (int id : manager.getAppWidgetIds(provider)) updateWidget(context, manager, id);
+        Context appContext = context.getApplicationContext();
+        AppWidgetManager manager = AppWidgetManager.getInstance(appContext);
+        ComponentName provider = new ComponentName(appContext, HybridTrainingWidgetProvider.class);
+        int[] ids = manager.getAppWidgetIds(provider);
+        for (int id : ids) {
+            updateWidget(appContext, manager, id);
+        }
     }
 
     private static void updateWidget(Context context, AppWidgetManager manager, int widgetId) {
-        Calendar now = Calendar.getInstance();
-        int dayIndex = (now.get(Calendar.DAY_OF_WEEK) + 5) % 7;
-        RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_training_today);
+        try {
+            Calendar now = Calendar.getInstance();
+            int dayIndex = (now.get(Calendar.DAY_OF_WEEK) + 5) % 7;
+            RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_training_today);
 
-        String title = TITLES[dayIndex];
-        String focus = FOCUS[dayIndex];
-        String cardio = CARDIO[dayIndex];
-        String type = (dayIndex == 2 || dayIndex == 5 || dayIndex == 6) ? "CORSA" : "FORZA + CARDIO";
+            views.setTextViewText(R.id.widget_type, (dayIndex == 2 || dayIndex == 5 || dayIndex == 6) ? "CORSA" : "FORZA + CARDIO");
+            views.setTextViewText(R.id.widget_day, DAYS[dayIndex]);
+            views.setTextViewText(R.id.widget_title, TITLES[dayIndex]);
+            views.setTextViewText(R.id.widget_focus, "Focus · " + FOCUS[dayIndex]);
+            views.setTextViewText(R.id.widget_cardio, CARDIO[dayIndex]);
+            views.setTextViewText(R.id.widget_date,
+                    new SimpleDateFormat("EEEE d MMMM", Locale.ITALIAN).format(now.getTime()));
 
-        // Leggiamo lo snapshot prodotto dalla WebApp. Se non esiste ancora,
-        // il widget continua a funzionare usando il programma predefinito.
-        SharedPreferences prefs = context.getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE);
-        String rawState = prefs.getString(STATE_KEY, null);
-        String week = null;
-        String profile = null;
-        long updatedAt = prefs.getLong("updated_at", 0L);
+            SharedPreferences prefs = context.getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE);
+            boolean synced = prefs.contains(STATE_KEY) || prefs.getLong("updated_at", 0L) > 0L;
+            views.setTextViewText(R.id.widget_sync, synced ? "Dati sincronizzati dall'app" : "Programma settimanale");
 
-        if (rawState != null) {
-            try {
-                JSONObject state = new JSONObject(rawState);
-                JSONObject meso = state.optJSONObject("meso");
-                if (meso != null && meso.has("week")) {
-                    week = "Settimana " + meso.optInt("week", 1);
-                }
+            Intent openIntent = new Intent(context, HybridTrainingWidgetProvider.class);
+            openIntent.setAction(ACTION_OPEN_APP);
+            openIntent.setPackage(context.getPackageName());
+            PendingIntent pending = PendingIntent.getBroadcast(
+                    context,
+                    widgetId,
+                    openIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+            );
+            views.setOnClickPendingIntent(R.id.widget_root, pending);
+            views.setOnClickPendingIntent(R.id.widget_open, pending);
 
-                JSONObject profileObj = state.optJSONObject("profile");
-                if (profileObj != null) {
-                    String name = profileObj.optString("name", "");
-                    if (!name.isEmpty()) profile = name;
-                }
-            } catch (Exception ignored) {
-                // Manteniamo i dati di default se lo snapshot non e' leggibile.
-            }
+            manager.updateAppWidget(widgetId, views);
+        } catch (Exception ignored) {
+            // Never let a widget update crash the launcher process.
         }
-
-        views.setTextViewText(R.id.widget_day, DAYS[dayIndex]);
-        views.setTextViewText(R.id.widget_title, title);
-        views.setTextViewText(R.id.widget_focus, "Focus · " + focus);
-        views.setTextViewText(R.id.widget_cardio, cardio);
-        views.setTextViewText(R.id.widget_date, new SimpleDateFormat("EEEE d MMMM", Locale.ITALIAN).format(now.getTime()));
-        views.setTextViewText(R.id.widget_type, type);
-
-        // Informazioni dinamiche provenienti dalla WebApp.
-        if (week != null) {
-            views.setTextViewText(R.id.widget_sync, week + (profile != null ? " · " + profile : ""));
-        } else if (updatedAt > 0L) {
-            views.setTextViewText(R.id.widget_sync, "Dati app sincronizzati");
-        } else {
-            views.setTextViewText(R.id.widget_sync, "Programma settimanale");
-        }
-
-        Intent openIntent = new Intent(context, HybridTrainingWidgetProvider.class);
-        openIntent.setAction(ACTION_OPEN_APP);
-        PendingIntent pending = PendingIntent.getBroadcast(
-                context,
-                widgetId,
-                openIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
-        views.setOnClickPendingIntent(R.id.widget_open, pending);
-        views.setOnClickPendingIntent(R.id.widget_root, pending);
-        manager.updateAppWidget(widgetId, views);
     }
 }
