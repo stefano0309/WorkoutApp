@@ -20,6 +20,10 @@
         --panel-bg: #121a2d;
         --panel2-bg: #19233a;
         --border-color: #2c3753;
+        --accent-orange: #ff5a36;
+        --accent-orange-2: #ff7a52;
+        --accent-blue: #b7c6ff;
+        --accent-blue-2: #8da3f5;
       }
       body {
         background: linear-gradient(140deg, #080d19, #0e1528 55%, #101a31);
@@ -95,6 +99,453 @@
         border-radius: 4px;
         display: inline-block;
       }
+
+      /* ===== HERO DASHBOARD (ispirato alle reference @omoakin.ux) ===== */
+      .avatar-circle {
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        background: linear-gradient(160deg, #3a4a7a, #1c2440);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 800;
+        color: #fff;
+        font-size: 1rem;
+        flex-shrink: 0;
+      }
+      .bell-btn {
+        width: 42px;
+        height: 42px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid var(--border-color);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        color: #eef3ff;
+        flex-shrink: 0;
+      }
+      .bell-dot {
+        position: absolute;
+        top: 8px;
+        right: 10px;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--accent-orange);
+        border: 2px solid #0e1528;
+      }
+      .hero-card {
+        border-radius: 26px;
+        padding: 20px;
+        min-height: 190px;
+        display: flex;
+        flex-direction: column;
+        position: relative;
+        overflow: hidden;
+      }
+      .hero-card-orange {
+        background: linear-gradient(
+          150deg,
+          var(--accent-orange-2),
+          var(--accent-orange)
+        );
+        color: #fff;
+      }
+      .hero-card-blue {
+        background: linear-gradient(
+          150deg,
+          var(--accent-blue),
+          var(--accent-blue-2)
+        );
+        color: #14183a;
+      }
+      .hero-icon-btn {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.28);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .checklist-pill {
+        background: rgba(255, 255, 255, 0.16);
+        border: 1.5px dashed rgba(255, 255, 255, 0.45);
+        border-radius: 18px;
+        padding: 8px 12px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 8px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .checklist-pill:hover {
+        background: rgba(255, 255, 255, 0.24);
+      }
+      .checklist-pill.done {
+        border-style: solid;
+      }
+      .checklist-check {
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        border: 2px solid rgba(255, 255, 255, 0.8);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        font-size: 0.8rem;
+      }
+      .checklist-check.done {
+        background: #fff;
+        color: var(--accent-orange);
+        border-color: #fff;
+      }
+      .start-pill-btn {
+        background: #fff;
+        color: #14183a;
+        border-radius: 30px;
+        padding: 10px 10px 10px 20px;
+        display: inline-flex;
+        align-items: center;
+        gap: 14px;
+        font-weight: 700;
+        border: none;
+        margin-top: auto;
+        align-self: flex-start;
+      }
+      .start-pill-btn .play-dot {
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        background: #14183a;
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .progress-ring-card {
+        background: #fff;
+        color: #14183a;
+        border-radius: 24px;
+        padding: 18px 20px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+      .ring-icon-circle {
+        width: 54px;
+        height: 54px;
+        border-radius: 50%;
+        background: var(--accent-orange);
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.3rem;
+        flex-shrink: 0;
+      }
+      .ring {
+        width: 62px;
+        height: 62px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        background: conic-gradient(
+          var(--accent-orange) calc(var(--pct) * 1%),
+          rgba(20, 24, 58, 0.12) 0
+        );
+      }
+      .ring-inner {
+        width: 46px;
+        height: 46px;
+        border-radius: 50%;
+        background: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 800;
+        font-size: 0.82rem;
+        color: #14183a;
+      }
+      .timeline-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 10px 0;
+        position: relative;
+      }
+      .timeline-dot-col {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        align-self: stretch;
+      }
+      .timeline-dot {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        border: 2px solid var(--accent-orange-2);
+        background: transparent;
+        flex-shrink: 0;
+      }
+      .timeline-dot.filled {
+        background: var(--accent-orange-2);
+      }
+      .timeline-line {
+        width: 2px;
+        flex: 1;
+        background: repeating-linear-gradient(
+          to bottom,
+          var(--border-color) 0,
+          var(--border-color) 4px,
+          transparent 4px,
+          transparent 8px
+        );
+        margin-top: 2px;
+      }
+      .now-pill {
+        background: #35d07f;
+        color: #08240f;
+        font-weight: 700;
+        border: none;
+        border-radius: 20px;
+        padding: 8px 18px;
+      }
+
+      /* ===== BOTTOM NAV MOBILE ===== */
+      .bottom-nav-wrap {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 12px;
+        display: flex;
+        justify-content: center;
+        z-index: 1030;
+        pointer-events: none;
+      }
+      .bottom-nav-pill {
+        pointer-events: auto;
+        background: rgba(14, 19, 38, 0.96);
+        border: 1px solid var(--border-color);
+        border-radius: 40px;
+        padding: 6px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+        backdrop-filter: blur(10px);
+      }
+      .bottom-nav-item {
+        border: none;
+        background: transparent;
+        color: #9fb0d0;
+        width: 46px;
+        height: 46px;
+        border-radius: 30px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.15rem;
+      }
+      .bottom-nav-item.active {
+        background: var(--accent-orange);
+        color: #fff;
+        width: auto;
+        padding: 0 16px;
+        gap: 8px;
+        font-size: 0.95rem;
+        font-weight: 700;
+      }
+
+      /* ===== QUICK LINKS (interconnessione tra tab) ===== */
+      .quick-links-row {
+        display: flex;
+        gap: 8px;
+        overflow-x: auto;
+        padding-bottom: 4px;
+        scrollbar-width: thin;
+      }
+      .quick-link-pill {
+        flex-shrink: 0;
+        border: 1px solid var(--border-color);
+        background: rgba(255, 255, 255, 0.03);
+        color: #9fb0d0;
+        border-radius: 20px;
+        padding: 7px 14px;
+        font-size: 0.82rem;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        white-space: nowrap;
+      }
+      .quick-link-pill.active {
+        background: var(--accent-orange);
+        border-color: var(--accent-orange);
+        color: #fff;
+      }
+
+      /* ===== STILE STRAVA (sezione Corsa) ===== */
+      .strava-hero {
+        background: linear-gradient(120deg, #fc4c02, #ff7a1a);
+        border-radius: 22px;
+        padding: 22px;
+        color: #fff;
+        margin-bottom: 20px;
+      }
+      .strava-stat-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 4px;
+        margin-top: 14px;
+      }
+      .strava-stat-grid > div {
+        text-align: center;
+        border-right: 1px solid rgba(255, 255, 255, 0.25);
+      }
+      .strava-stat-grid > div:last-child {
+        border-right: none;
+      }
+      .strava-stat-num {
+        font-size: 1.5rem;
+        font-weight: 800;
+        line-height: 1.1;
+      }
+      .strava-stat-label {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        opacity: 0.85;
+      }
+      .strava-activity-card {
+        background: linear-gradient(
+          180deg,
+          rgba(22, 31, 51, 0.96),
+          rgba(15, 22, 40, 0.96)
+        );
+        border: 1px solid var(--border-color);
+        border-left: 4px solid #fc4c02;
+        border-radius: 14px;
+        padding: 16px;
+      }
+      .strava-icon-badge {
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        background: rgba(252, 76, 2, 0.15);
+        color: #fc4c02;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.2rem;
+        flex-shrink: 0;
+      }
+      .strava-metric {
+        text-align: center;
+        padding: 6px 4px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.03);
+      }
+      .strava-metric-val {
+        font-weight: 800;
+        font-size: 1rem;
+        color: #fff;
+      }
+      .strava-metric-label {
+        font-size: 0.68rem;
+        color: #9fb0d0;
+        text-transform: uppercase;
+      }
+      .strava-btn {
+        background: #fc4c02;
+        border: none;
+        color: #fff;
+        font-weight: 700;
+        border-radius: 20px;
+        padding: 8px 18px;
+      }
+      .strava-btn.done {
+        background: rgba(255, 255, 255, 0.08);
+        color: #35d07f;
+        border: 1px solid #35d07f;
+      }
+
+      /* ===== FAB REGISTRAZIONE RAPIDA ===== */
+      .fab-log-btn {
+        position: fixed;
+        right: 20px;
+        bottom: 92px;
+        width: 58px;
+        height: 58px;
+        border-radius: 50%;
+        border: none;
+        background: linear-gradient(
+          160deg,
+          var(--accent-orange-2),
+          var(--accent-orange)
+        );
+        color: #fff;
+        font-size: 1.5rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 10px 28px rgba(255, 90, 54, 0.45);
+        z-index: 1035;
+        transition: transform 0.15s;
+      }
+      .fab-log-btn:active {
+        transform: scale(0.92);
+      }
+      @media (min-width: 992px) {
+        .fab-log-btn {
+          bottom: 28px;
+        }
+      }
+      .quick-log-tile {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid var(--border-color);
+        border-radius: 16px;
+        padding: 14px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        width: 100%;
+        text-align: left;
+        color: #eef3ff;
+        transition:
+          background 0.15s,
+          border-color 0.15s;
+      }
+      .quick-log-tile:hover {
+        background: rgba(255, 255, 255, 0.08);
+      }
+      .quick-log-tile.done {
+        border-color: #35d07f;
+        opacity: 0.7;
+      }
+      .quick-log-tile .qlt-icon {
+        width: 42px;
+        height: 42px;
+        border-radius: 12px;
+        background: rgba(252, 76, 2, 0.15);
+        color: #fc4c02;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.15rem;
+        flex-shrink: 0;
+      }
+      .quick-log-tile.strength .qlt-icon {
+        background: rgba(98, 212, 255, 0.15);
+        color: #62d4ff;
+      }
     </style>
   </head>
   <body>
@@ -130,14 +581,30 @@
 
             <nav
               id="nav"
-              class="nav nav-pills flex-row flex-lg-column gap-1 overflow-auto flex-nowrap mb-3"
+              class="nav nav-pills d-none d-lg-flex flex-lg-column gap-1 overflow-auto flex-nowrap mb-3"
             ></nav>
           </div>
         </aside>
 
-        <main class="col-12 col-lg-9 col-xl-10 p-3 p-md-4" id="app"></main>
+        <main
+          class="col-12 col-lg-9 col-xl-10 p-3 p-md-4 pb-5 mb-5 mb-lg-0"
+          id="app"
+        ></main>
       </div>
     </div>
+
+    <div class="bottom-nav-wrap d-lg-none">
+      <div class="bottom-nav-pill" id="bottomNav"></div>
+    </div>
+
+    <button
+      class="fab-log-btn"
+      id="fabLog"
+      onclick="openQuickLog()"
+      title="Registrazione rapida"
+    >
+      <i class="bi bi-plus-lg"></i>
+    </button>
 
     <div class="modal fade" id="appModal" tabindex="-1" aria-hidden="true">
       <div class="modal-dialog modal-dialog-centered">
@@ -743,38 +1210,43 @@
       function logRun(category, dayLabel) {
         addLog("run", category, { day: dayLabel });
         toast(`Corsa registrata: ${category}`);
-        if (state.activePage === "corsa") render();
+        render();
       }
 
       function toast(msg) {
         const el = document.createElement("div");
         el.className =
-          "toast align-items-center text-bg-success border-0 position-fixed bottom-0 end-0 m-3 show";
+          "toast align-items-center text-bg-success border-0 position-fixed end-0 m-3 show";
         el.style.zIndex = 2000;
+        el.style.bottom = "150px";
         el.innerHTML = `<div class="d-flex"><div class="toast-body"><i class="bi bi-check-circle me-2"></i>${esc(msg)}</div></div>`;
         document.body.appendChild(el);
         setTimeout(() => el.remove(), 2200);
       }
 
-      function logDatesSet() {
+      function logDatesSet(typeFilter) {
         const map = {};
         state.log.forEach((l) => {
+          if (typeFilter && l.type !== typeFilter) return;
           map[l.date] = (map[l.date] || 0) + 1;
         });
-        // include legacy strength sessions saved before logging existed
-        Object.values(state.sessions).forEach((s) => {
-          if (!s.at) return;
-          const k = todayKey(new Date(s.at));
-          const alreadyCounted = state.log.some(
-            (l) => l.date === k && l.type === "strength" && l.label === s.name,
-          );
-          if (!alreadyCounted) map[k] = (map[k] || 0) + 1;
-        });
+        if (!typeFilter || typeFilter === "strength") {
+          // include legacy strength sessions saved before logging existed
+          Object.values(state.sessions).forEach((s) => {
+            if (!s.at) return;
+            const k = todayKey(new Date(s.at));
+            const alreadyCounted = state.log.some(
+              (l) =>
+                l.date === k && l.type === "strength" && l.label === s.name,
+            );
+            if (!alreadyCounted) map[k] = (map[k] || 0) + 1;
+          });
+        }
         return map;
       }
 
-      function computeStreaks() {
-        const map = logDatesSet();
+      function computeStreaks(typeFilter) {
+        const map = logDatesSet(typeFilter);
         const days = Object.keys(map).sort();
         if (!days.length) return { current: 0, best: 0 };
 
@@ -792,7 +1264,7 @@
           best = Math.max(best, run);
         }
 
-        // current streak: walk backwards from today (or yesterday, to allow "not yet trained today")
+        // current streak: walk backwards from today (o ieri, per non azzerare subito se non ci si è ancora allenati oggi)
         let current = 0;
         let cursor = new Date();
         cursor.setHours(0, 0, 0, 0);
@@ -804,6 +1276,42 @@
           cursor.setDate(cursor.getDate() - 1);
         }
         return { current, best };
+      }
+
+      function runDurationMinutes(title) {
+        const s = RUN_SESSIONS.find((r) => r.title === title);
+        if (!s) return 0;
+        const m = s.duration.match(/(\d+)/);
+        return m ? parseInt(m[1], 10) : 0;
+      }
+
+      function runStatsThisWeek() {
+        const now = new Date();
+        const start = new Date(now);
+        start.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+        start.setHours(0, 0, 0, 0);
+        const runs = state.log.filter((l) => {
+          if (l.type !== "run") return false;
+          const d = new Date(l.date);
+          return d >= start;
+        });
+        const minutes = runs.reduce(
+          (sum, r) => sum + runDurationMinutes(r.type === "run" ? r.label : ""),
+          0,
+        );
+        return { count: runs.length, minutes };
+      }
+
+      function runCategoryCountThisMonth(category) {
+        const now = new Date();
+        return state.log.filter((l) => {
+          if (l.type !== "run" || l.label !== category) return false;
+          const d = new Date(l.date);
+          return (
+            d.getFullYear() === now.getFullYear() &&
+            d.getMonth() === now.getMonth()
+          );
+        }).length;
       }
 
       function sessionsByWeek(nWeeks) {
@@ -940,6 +1448,25 @@
           )
           .join("");
 
+        const bottomItems = [
+          { id: "dashboard", label: "Home", icon: "house-door-fill" },
+          { id: "mesociclo", label: "Esplora", icon: "compass" },
+          { id: "statistiche", label: "Stats", icon: "bar-chart-fill" },
+          { id: "settings", label: "Profilo", icon: "person-fill" },
+        ];
+        const bottomNavEl = document.getElementById("bottomNav");
+        if (bottomNavEl) {
+          bottomNavEl.innerHTML = bottomItems
+            .map((item) => {
+              const isActive = state.activePage === item.id;
+              return `
+    <button class="bottom-nav-item ${isActive ? "active" : ""}" onclick="route('${item.id}')">
+      <i class="bi bi-${item.icon}"></i>${isActive ? `<span>${item.label}</span>` : ""}
+    </button>`;
+            })
+            .join("");
+        }
+
         const views = {
           dashboard,
           assessment: () => assessHTML() + scoreCard(),
@@ -962,6 +1489,9 @@
         if (state.activePage === "statistiche") {
           setTimeout(renderStatsCharts, 50);
         }
+        if (state.activePage === "workout") {
+          setTimeout(renderPatternChips, 30);
+        }
       }
 
       function updateMini() {
@@ -975,6 +1505,98 @@
           elId.textContent = state.profile
             ? state.profile.id
             : "Completa l’assessment";
+      }
+
+      function dayCompletion(i) {
+        const day = SCHEDULE[i];
+        if (day.patterns.length) {
+          return day.patterns.every(
+            (p) => !!state.sessions["w" + state.meso.week + "-" + i + "-" + p],
+          );
+        }
+        return state.log.some((l) => l.type === "run" && l.date === todayKey());
+      }
+
+      function dayTimeHint(i) {
+        const day = SCHEDULE[i];
+        if (day.patterns.length && day.cardio === "Nessun cardio")
+          return "Sessione forza";
+        if (!day.patterns.length) return "Corsa · " + day.cardio;
+        return "Forza + Corsa";
+      }
+
+      function todayIndex() {
+        return (new Date().getDay() + 6) % 7;
+      }
+
+      // Mappa giorno-schedule -> titolo sessione di corsa corrispondente (RUN_SESSIONS)
+      const RUN_FOR_DAY_INDEX = {
+        1: "Easy Run", // Martedì
+        2: "Interval Run", // Mercoledì
+        3: "Easy Run", // Giovedì
+        4: "Corsa Progressiva", // Venerdì
+        5: "Recupero Attivo", // Sabato
+        6: "Long Run", // Domenica
+      };
+
+      // ===== WIDGET CONDIVISO "OGGI" =====
+      // Vera interconnessione tra tab: mostra stato reale (forza/corsa/streak)
+      // e permette di AGIRE (aprire la sessione, registrare la corsa) restando
+      // sulla pagina corrente. È incorporato in Allenamento, Corsa, Cardio e
+      // Recupero, così le azioni fatte da una tab aggiornano subito lo stato
+      // visibile nelle altre (Dashboard, Statistiche) senza dover navigare.
+      function todayContextCard() {
+        const tIdx = todayIndex();
+        const day = SCHEDULE[tIdx];
+        const strengthDone = day.patterns.length ? dayCompletion(tIdx) : null;
+        const runTitle = RUN_FOR_DAY_INDEX[tIdx] || null;
+        const runDoneToday = runTitle
+          ? state.log.some(
+              (l) =>
+                l.type === "run" &&
+                l.label === runTitle &&
+                l.date === todayKey(),
+            )
+          : null;
+        const streaks = computeStreaks();
+
+        return `
+  <div class="card card-custom p-3 mb-4">
+    <div class="d-flex flex-wrap align-items-center gap-3">
+      <div class="flex-grow-1" style="min-width:180px">
+        <div class="text-secondary small text-uppercase mb-1"><i class="bi bi-calendar-event me-1"></i> Oggi · ${day.day}</div>
+        <div class="fw-bold text-white">${esc(day.title)}</div>
+      </div>
+
+      ${
+        day.patterns.length
+          ? `
+      <div class="d-flex align-items-center gap-2">
+        <span class="badge ${strengthDone ? "bg-success" : "bg-secondary"}"><i class="bi ${strengthDone ? "bi-check-lg" : "bi-hourglass-split"} me-1"></i>Forza</span>
+        <button class="btn btn-sm btn-outline-light" onclick="openDay(${tIdx})">${strengthDone ? "Rivedi" : "Apri"} <i class="bi bi-arrow-right"></i></button>
+      </div>`
+          : ""
+      }
+
+      ${
+        runTitle
+          ? `
+      <div class="d-flex align-items-center gap-2">
+        <span class="badge ${runDoneToday ? "bg-success" : "bg-secondary"}"><i class="bi ${runDoneToday ? "bi-check-lg" : "bi-hourglass-split"} me-1"></i>${esc(runTitle)}</span>
+        ${
+          runDoneToday
+            ? ""
+            : `<button class="strava-btn" style="padding:6px 14px;font-size:.8rem" onclick="logRun('${runTitle.replace(/'/g, "\\'")}', '${day.day.replace(/'/g, "\\'")}')"><i class="bi bi-play-fill me-1"></i>Registra</button>`
+        }
+      </div>`
+          : ""
+      }
+
+      <div class="d-flex align-items-center gap-1 text-warning fw-bold ms-auto" role="button" onclick="route('statistiche')" title="Vai alle statistiche">
+        <i class="bi bi-fire"></i> ${streaks.current}
+      </div>
+    </div>
+  </div>`;
       }
 
       function dashboard() {
@@ -999,42 +1621,126 @@
         );
         const streaks = computeStreaks();
 
+        const tIdx = todayIndex();
+        const tmrIdx = (tIdx + 1) % 7;
+        const todayDay = SCHEDULE[tIdx];
+        const tmrDay = SCHEDULE[tmrIdx];
+        const todayDone = dayCompletion(tIdx);
+        const tmrDone = dayCompletion(tmrIdx);
+        const pct = Math.min(100, Math.round((sdone / 5) * 100));
+        const dateLabel = new Date()
+          .toLocaleDateString("it-IT", {
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+          })
+          .replace(/^./, (c) => c.toUpperCase());
+        const initials = (p.id || "U").slice(0, 2).toUpperCase();
+
         return (
-          pageHead("Dashboard", "Panoramica del ciclo corrente") +
           `
-  <div class="row g-3 mb-4">
-    <div class="col-12 col-sm-6 col-xl-3">
-      <div class="card card-custom p-3 h-100">
-        <span class="text-secondary small text-uppercase">Profile ID</span>
-        <div class="metric-val text-truncate fs-5 text-info my-1">${esc(p.id)}</div>
-        <div><span class="badge bg-primary">${p.level}</span></div>
+  <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <div class="d-flex align-items-center gap-3">
+      <div class="avatar-circle">${esc(initials)}</div>
+      <div>
+        <div class="text-secondary small">Ciao! 👋</div>
+        <div class="h5 fw-bold mb-0 text-white">${esc(p.id)}</div>
       </div>
     </div>
-    <div class="col-12 col-sm-6 col-xl-3">
-      <div class="card card-custom p-3 h-100">
-        <span class="text-secondary small text-uppercase">Punteggio</span>
-        <div class="metric-val text-white my-1">${p.score} / 20</div>
-        <div class="progress bg-dark" style="height: 6px;">
-          <div class="progress-bar bg-info" style="width: ${p.score * 5}%"></div>
-        </div>
-      </div>
-    </div>
-    <div class="col-12 col-sm-6 col-xl-3">
-      <div class="card card-custom p-3 h-100">
-        <span class="text-secondary small text-uppercase">Settimana</span>
-        <div class="metric-val text-white my-1">${state.meso.week} / 4</div>
-        <span class="text-secondary small">${week.name} · Vol. ${Math.round(week.volume * 100)}%</span>
-      </div>
-    </div>
-    <div class="col-12 col-sm-6 col-xl-3">
-      <div class="card card-custom p-3 h-100" role="button" onclick="route('statistiche')">
-        <span class="text-secondary small text-uppercase">Streak Allenamenti</span>
-        <div class="metric-val text-white my-1"><i class="bi bi-fire text-warning me-1"></i>${streaks.current}</div>
-        <span class="text-secondary small">record: ${streaks.best} gg · vedi Statistiche <i class="bi bi-arrow-right"></i></span>
+    <div class="d-flex align-items-center gap-2">
+      <span class="badge ${week.badge} px-3 py-2 fs-6 d-none d-sm-inline-block">W${state.meso.week} · ${week.name}</span>
+      <div class="bell-btn" role="button" onclick="route('statistiche')">
+        <i class="bi bi-bell-fill"></i>
+        ${streaks.current > 0 ? `<span class="bell-dot"></span>` : ""}
       </div>
     </div>
   </div>
 
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-md-6">
+      <div class="hero-card hero-card-orange">
+        <div class="d-flex justify-content-between align-items-start">
+          <h5 class="fw-bold mb-0">Piano<br />Allenamento</h5>
+          <div class="hero-icon-btn"><i class="bi bi-magic"></i></div>
+        </div>
+        <div class="checklist-pill ${todayDone ? "done" : ""}" role="button" onclick="openDay(${tIdx})">
+          <div class="checklist-check ${todayDone ? "done" : ""}">${todayDone ? '<i class="bi bi-check-lg"></i>' : ""}</div>
+          <div class="flex-grow-1">
+            <div class="fw-bold small">${esc(todayDay.title)}</div>
+            <div class="small" style="opacity:.85">Oggi · ${esc(dayTimeHint(tIdx))}</div>
+          </div>
+        </div>
+        <div class="checklist-pill ${tmrDone ? "done" : ""}" role="button" onclick="openDay(${tmrIdx})">
+          <div class="checklist-check ${tmrDone ? "done" : ""}">${tmrDone ? '<i class="bi bi-check-lg"></i>' : ""}</div>
+          <div class="flex-grow-1">
+            <div class="fw-bold small">${esc(tmrDay.title)}</div>
+            <div class="small" style="opacity:.85">Domani · ${esc(dayTimeHint(tmrIdx))}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6">
+      <div class="hero-card hero-card-blue">
+        <div class="small fw-semibold" style="opacity:.75">${esc(dateLabel)}</div>
+        <h4 class="fw-bold mt-1 mb-3">Inizia il tuo<br />Allenamento di Oggi</h4>
+        <button class="start-pill-btn" onclick="${todayDay.patterns.length ? `openDay(${tIdx})` : `route('corsa')`}">
+          Start <span class="play-dot"><i class="bi bi-play-fill"></i></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-md-6">
+      <div class="progress-ring-card h-100">
+        <div class="ring-icon-circle"><i class="bi ${todayDay.patterns.length ? "bi-lightning-charge-fill" : "bi-map-fill"}"></i></div>
+        <div class="flex-grow-1">
+          <div class="fw-bold">${esc(todayDay.title)}</div>
+          <div class="small text-secondary">${sdone} di 5 sessioni completate</div>
+        </div>
+        <div class="ring" style="--pct:${pct}">
+          <div class="ring-inner">${pct}%</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6">
+      <div class="card card-custom p-3 h-100 d-flex flex-row align-items-center gap-3" role="button" onclick="route('statistiche')">
+        <div class="ring-icon-circle" style="background:var(--accent-blue-2)"><i class="bi bi-fire"></i></div>
+        <div class="flex-grow-1">
+          <div class="fw-bold text-white">Streak: ${streaks.current} giorni</div>
+          <div class="small text-secondary">Record: ${streaks.best} gg · vedi le Statistiche <i class="bi bi-arrow-right"></i></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card card-custom p-3 mb-4">
+    <h5 class="mb-3">Attività di Oggi</h5>
+    ${[tIdx, tmrIdx]
+      .map((idx, pos) => {
+        const day = SCHEDULE[idx];
+        const done = dayCompletion(idx);
+        const isLast = pos === 1;
+        return `
+    <div class="timeline-row">
+      <div class="timeline-dot-col">
+        <div class="timeline-dot ${done ? "filled" : ""}"></div>
+        ${!isLast ? '<div class="timeline-line"></div>' : ""}
+      </div>
+      <div class="flex-grow-1">
+        <div class="fw-bold text-white">${esc(day.title)}</div>
+        <div class="small text-secondary">${esc(day.day)} · ${esc(dayTimeHint(idx))}</div>
+      </div>
+      ${
+        pos === 0
+          ? `<button class="now-pill" onclick="openDay(${idx})">Ora</button>`
+          : `<span class="text-secondary small">${esc(day.day)}</span>`
+      }
+    </div>`;
+      })
+      .join("")}
+  </div>` +
+          `
   ${
     promotion
       ? `
@@ -1282,35 +1988,66 @@
             "Allenamento",
             "Forza prima della corsa · Tracker Set-by-Set Interattivo",
           ) +
+          todayContextCard() +
           `
   <div class="card card-custom p-4 mb-4">
-    <div class="row g-3 align-items-end">
-      <div class="col-12 col-md-4">
+    <div class="row g-3">
+      <div class="col-12 col-md-5">
         <label class="form-label text-secondary small">Seleziona Giorno</label>
-        <select id="wday" class="form-select bg-dark text-light border-secondary">
-          ${SCHEDULE.map((x, i) => `<option value="${i}">${x.day} · ${x.title}</option>`).join("")}
+        <select id="wday" class="form-select bg-dark text-light border-secondary" onchange="renderPatternChips()">
+          ${SCHEDULE.map(
+            (x, i) =>
+              `<option value="${i}" ${i === todayIndex() ? "selected" : ""}>${x.day} · ${x.title}</option>`,
+          ).join("")}
         </select>
       </div>
-      <div class="col-12 col-md-4">
-        <label class="form-label text-secondary small">Pattern Movimento</label>
-        <select id="wpat" class="form-select bg-dark text-light border-secondary">
-          <option value="push">Push (Spinta)</option>
-          <option value="pull">Pull (Tirata)</option>
-          <option value="squat">Squat</option>
-          <option value="hinge">Hinge (Anca)</option>
-          <option value="shoulder">Spalla</option>
-        </select>
-      </div>
-      <div class="col-12 col-md-4">
-        <button class="btn btn-primary w-100 py-2" onclick="startWorkout()">
-          <i class="bi bi-lightning-charge-fill me-1"></i> Carica Sessione
-        </button>
+      <div class="col-12 col-md-7">
+        <label class="form-label text-secondary small">Pattern Movimento · tocca per iniziare subito</label>
+        <div id="patChips" class="d-flex flex-wrap gap-2"></div>
+        <input type="hidden" id="wpat" value="" />
       </div>
     </div>
   </div>
 
   <div id="generated"></div>`
         );
+      }
+
+      function renderPatternChips() {
+        const el = document.getElementById("patChips");
+        const daySel = document.getElementById("wday");
+        if (!el || !daySel) return;
+        const dayIdx = +daySel.value;
+        const day = SCHEDULE[dayIdx];
+        const labels = {
+          push: "Push",
+          pull: "Pull",
+          squat: "Squat",
+          hinge: "Hinge",
+          shoulder: "Spalla",
+        };
+        if (!day.patterns.length) {
+          el.innerHTML = `<div class="text-secondary small py-2">Giorno di sola corsa: usa il FAB <i class="bi bi-plus-circle-fill text-danger"></i> in basso per registrarla.</div>`;
+          document.getElementById("generated").innerHTML = "";
+          return;
+        }
+        el.innerHTML = day.patterns
+          .map((p) => {
+            const done =
+              !!state.sessions["w" + state.meso.week + "-" + dayIdx + "-" + p];
+            return `
+    <button class="quick-link-pill ${done ? "active" : ""}" style="padding:11px 18px;font-size:.88rem" onclick="selectPattern(${dayIdx}, '${p}')">
+      <i class="bi ${done ? "bi-check-lg" : "bi-lightning-charge-fill"}"></i> ${labels[p]}
+    </button>`;
+          })
+          .join("");
+      }
+
+      function selectPattern(dayIdx, pat) {
+        document.getElementById("wday").value = dayIdx;
+        document.getElementById("wpat").value = pat;
+        renderPatternChips();
+        startWorkout();
       }
 
       function startWorkout() {
@@ -1455,6 +2192,7 @@
             "Cardio & Zone",
             "Test dei 30 minuti prioritario rispetto a 220−età",
           ) +
+          todayContextCard() +
           `
   <div class="card card-custom p-4 mb-4">
     <h4 class="h5 mb-3">Test 30 Minuti (FC Media ultimi 20')</h4>
@@ -1788,12 +2526,41 @@
       }
 
       function corsaPage() {
+        const wk = runStatsThisWeek();
+        const runStreak = computeStreaks("run");
+        const todayK = todayKey();
+
         return (
           pageHead(
             "Programma di Corsa",
             "Modello polarizzato 80/20 · integrato con la forza a corpo libero",
           ) +
+          todayContextCard() +
           `
+  <div class="strava-hero">
+    <div class="d-flex justify-content-between align-items-start">
+      <div>
+        <div class="small fw-semibold" style="opacity:.85"><i class="bi bi-strava me-1"></i>QUESTA SETTIMANA</div>
+        <h4 class="fw-bold mb-0 mt-1">Il tuo riepilogo corsa</h4>
+      </div>
+      <div class="hero-icon-btn"><i class="bi bi-map-fill"></i></div>
+    </div>
+    <div class="strava-stat-grid">
+      <div>
+        <div class="strava-stat-num">${wk.count}</div>
+        <div class="strava-stat-label">Sessioni</div>
+      </div>
+      <div>
+        <div class="strava-stat-num">${wk.minutes}'</div>
+        <div class="strava-stat-label">Minuti stimati</div>
+      </div>
+      <div>
+        <div class="strava-stat-num"><i class="bi bi-fire"></i> ${runStreak.current}</div>
+        <div class="strava-stat-label">Streak corsa</div>
+      </div>
+    </div>
+  </div>
+
   <div class="alert alert-info border-0 bg-info bg-opacity-10 text-info mb-4">
     <i class="bi bi-info-circle-fill me-2"></i>Filosofia <strong>80/20</strong>: l'80% del volume settimanale è a bassa intensità (Z1–Z2), solo il 20% è dedicato a stimoli realmente duri (Z3–Z4).
   </div>
@@ -1813,26 +2580,52 @@
     ).join("")}
   </div>
 
-  <h5 class="mb-3"><i class="bi bi-calendar-week me-1"></i> Struttura Settimanale · 5 Sessioni</h5>
+  <h5 class="mb-3"><i class="bi bi-activity me-1"></i> Le tue attività · 5 Sessioni Settimanali</h5>
   <div class="row g-3 mb-4">
-    ${RUN_SESSIONS.map(
-      (s, i) => `
+    ${RUN_SESSIONS.map((s, i) => {
+      const doneToday = state.log.some(
+        (l) => l.type === "run" && l.label === s.title && l.date === todayK,
+      );
+      const monthCount = runCategoryCountThisMonth(s.title);
+      return `
       <div class="col-12 col-md-6">
-        <div class="card card-custom p-3 h-100">
-          <div class="d-flex justify-content-between align-items-start mb-2">
-            <span class="badge bg-secondary">${s.day}</span>
+        <div class="strava-activity-card h-100 d-flex flex-column">
+          <div class="d-flex align-items-center gap-3 mb-3">
+            <div class="strava-icon-badge"><i class="bi ${s.icon}"></i></div>
+            <div class="flex-grow-1">
+              <div class="fw-bold text-white">${s.title}</div>
+              <div class="small text-secondary">${s.day}</div>
+            </div>
             <span class="badge bg-dark border text-light">${s.zone}</span>
           </div>
-          <h6 class="fw-bold text-light mb-1"><i class="bi ${s.icon} me-1 text-info"></i> ${s.title}</h6>
-          <span class="text-info small mb-2 d-block"><i class="bi bi-clock"></i> ${s.duration}</span>
           <p class="text-secondary small mb-3">${s.desc}</p>
-          <button class="btn btn-sm btn-outline-success mt-auto align-self-start" onclick="logRun('${s.title.replace(/'/g, "\\'")}', '${s.day.replace(/'/g, "\\'")}')">
-            <i class="bi bi-check2-circle me-1"></i> Segna come completata
+          <div class="row g-2 mb-3">
+            <div class="col-4">
+              <div class="strava-metric">
+                <div class="strava-metric-val">${s.duration}</div>
+                <div class="strava-metric-label">Durata</div>
+              </div>
+            </div>
+            <div class="col-4">
+              <div class="strava-metric">
+                <div class="strava-metric-val">${s.zone}</div>
+                <div class="strava-metric-label">Zona target</div>
+              </div>
+            </div>
+            <div class="col-4">
+              <div class="strava-metric">
+                <div class="strava-metric-val">${monthCount}×</div>
+                <div class="strava-metric-label">Questo mese</div>
+              </div>
+            </div>
+          </div>
+          <button class="strava-btn ${doneToday ? "done" : ""} mt-auto align-self-start" onclick="logRun('${s.title.replace(/'/g, "\\'")}', '${s.day.replace(/'/g, "\\'")}')">
+            <i class="bi ${doneToday ? "bi-check2-circle" : "bi-play-fill"} me-1"></i> ${doneToday ? "Registrata oggi" : "Registra attività"}
           </button>
         </div>
       </div>
-    `,
-    ).join("")}
+    `;
+    }).join("")}
   </div>
 
   <div class="card card-custom p-4 mb-4">
@@ -1884,12 +2677,26 @@
       }
 
       function recuperoPage() {
+        const tIdx = todayIndex();
+        const todayDay = SCHEDULE[tIdx];
+        const isHighDemand =
+          todayDay.cardio === "Zona 4" || todayDay.cardio === "Zona 2";
         return (
           pageHead(
             "Recupero Fisico",
             "Nutrizione, monitoraggio e principi di recupero sistemico",
           ) +
+          todayContextCard() +
           `
+  <div class="alert ${isHighDemand ? "alert-warning border-0 bg-warning bg-opacity-10 text-warning" : "alert-secondary border-0 bg-dark text-secondary"} mb-4">
+    <i class="bi bi-lightbulb-fill me-2"></i>
+    ${
+      isHighDemand
+        ? `Oggi (<strong>${esc(todayDay.title)}</strong>) è una sessione ad alta richiesta energetica: dai priorità a carboidrati e idratazione con sodio prima/durante l'allenamento (vedi sotto).`
+        : `Oggi (<strong>${esc(todayDay.title)}</strong>) è una giornata a domanda energetica moderata: nutrizione standard, focus su sonno e mobilità.`
+    }
+  </div>
+
   <h5 class="mb-3"><i class="bi bi-egg-fried me-1"></i> Supporto Nutrizionale</h5>
   <div class="row g-3 mb-4">
     ${RECOVERY_NUTRITION.map(
@@ -2296,9 +3103,69 @@
         route("workout");
         setTimeout(() => {
           document.getElementById("wday").value = index;
-          document.getElementById("wpat").value = x.patterns[0];
-          startWorkout();
+          selectPattern(index, x.patterns[0]);
         }, 50);
+      }
+
+      // ===== REGISTRAZIONE RAPIDA (FAB globale) =====
+      // Accessibile da qualunque pagina: permette di loggare la corsa in un
+      // tocco o saltare direttamente al tracker forza del giorno, senza dover
+      // prima navigare sulla tab corretta.
+      function quickLogSheet() {
+        const tIdx = todayIndex();
+        const day = SCHEDULE[tIdx];
+        const todayK = todayKey();
+        const strengthDone = day.patterns.length ? dayCompletion(tIdx) : null;
+
+        return `
+  <div class="modal-header border-secondary">
+    <h5 class="modal-title"><i class="bi bi-lightning-charge-fill text-warning me-2"></i>Registrazione Rapida</h5>
+    <button type="button" class="btn-close btn-close-white" onclick="closeModal()"></button>
+  </div>
+  <div class="modal-body">
+    <div class="small text-secondary text-uppercase mb-2">Corsa · tocca per registrare</div>
+    <div class="d-flex flex-column gap-2 mb-4">
+      ${RUN_SESSIONS.map((s) => {
+        const done = state.log.some(
+          (l) => l.type === "run" && l.label === s.title && l.date === todayK,
+        );
+        return `
+      <button class="quick-log-tile ${done ? "done" : ""}" ${done ? "disabled" : ""} onclick="quickLogRun('${s.title.replace(/'/g, "\\'")}', '${s.day.replace(/'/g, "\\'")}')">
+        <div class="qlt-icon"><i class="bi ${s.icon}"></i></div>
+        <div class="flex-grow-1">
+          <div class="fw-bold">${s.title}</div>
+          <div class="small text-secondary">${s.zone} · ${s.duration}</div>
+        </div>
+        ${done ? '<i class="bi bi-check-circle-fill text-success fs-5"></i>' : '<i class="bi bi-chevron-right text-secondary"></i>'}
+      </button>`;
+      }).join("")}
+    </div>
+
+    <div class="small text-secondary text-uppercase mb-2">Forza · sessione di oggi</div>
+    ${
+      day.patterns.length
+        ? `
+    <button class="quick-log-tile strength" onclick="closeModal(); openDay(${tIdx})">
+      <div class="qlt-icon"><i class="bi bi-lightning-charge-fill"></i></div>
+      <div class="flex-grow-1">
+        <div class="fw-bold">${esc(day.title)}</div>
+        <div class="small text-secondary">${strengthDone ? "Già completata oggi · rivedi" : "Tocca per aprire il tracker set-by-set"}</div>
+      </div>
+      ${strengthDone ? '<i class="bi bi-check-circle-fill text-success fs-5"></i>' : '<i class="bi bi-chevron-right text-secondary"></i>'}
+    </button>`
+        : `
+    <div class="text-secondary small">Oggi non è prevista una sessione di forza (${esc(day.title)}).</div>`
+    }
+  </div>`;
+      }
+
+      function openQuickLog() {
+        openModal(quickLogSheet());
+      }
+
+      function quickLogRun(category, dayLabel) {
+        logRun(category, dayLabel);
+        openModal(quickLogSheet());
       }
 
       render();
