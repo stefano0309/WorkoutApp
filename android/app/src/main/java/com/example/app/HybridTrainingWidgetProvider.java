@@ -9,6 +9,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.widget.RemoteViews;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.text.SimpleDateFormat;
@@ -55,6 +56,7 @@ public class HybridTrainingWidgetProvider extends AppWidgetProvider {
 
             SharedPreferences prefs = context.getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE);
             String latest = prefs.getString(LOG_KEY, null);
+            if (latest == null) latest = latestFromState(prefs.getString(STATE_KEY, null));
             String sync = prefs.contains(STATE_KEY) ? "Dati sincronizzati" : "Programma settimanale";
             if (latest != null) {
                 try {
@@ -77,5 +79,19 @@ public class HybridTrainingWidgetProvider extends AppWidgetProvider {
             views.setOnClickPendingIntent(R.id.widget_open, pending);
             manager.updateAppWidget(widgetId, views);
         } catch (Exception ignored) {}
+    }
+
+    private static String latestFromState(String rawState) {
+        if (rawState == null) return null;
+        try {
+            JSONObject state = new JSONObject(rawState);
+            JSONArray log = state.optJSONArray("log");
+            if (log == null || log.length() == 0) return null;
+            for (int i = log.length() - 1; i >= 0; i--) {
+                JSONObject entry = log.optJSONObject(i);
+                if (entry != null && "strength".equals(entry.optString("type"))) return entry.toString();
+            }
+        } catch (Exception ignored) {}
+        return null;
     }
 }
