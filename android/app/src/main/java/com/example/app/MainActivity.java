@@ -24,10 +24,7 @@ public class MainActivity extends BridgeActivity {
     private static final Handler HANDLER = new Handler();
     private final WidgetJavascriptBridge widgetBridge = new WidgetJavascriptBridge();
 
-    @Override public void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        installWidgetBridge();
-    }
+    @Override public void onCreate(Bundle savedInstanceState) { super.onCreate(savedInstanceState); installWidgetBridge(); }
     @Override public void onResume() { super.onResume(); installWidgetBridge(); }
 
     private void installWidgetBridge() {
@@ -44,8 +41,7 @@ public class MainActivity extends BridgeActivity {
     private void injectWidgetSyncScript(final WebView webView, long delayMs) {
         HANDLER.postDelayed(() -> {
             String script = "javascript:(function(){" +
-                    "if(!window.__htsNativeBoot){" +
-                    "var s=document.createElement('script');s.src='workout-ux.js';s.async=false;document.head.appendChild(s);window.__htsNativeBoot=true;}" +
+                    "if(!window.__htsNativeBoot){var s=document.createElement('script');s.src='workout-ux.js';s.async=false;document.head.appendChild(s);window.__htsNativeBoot=true;}" +
                     "if(window.__hybridWidgetBridgeInstalled){try{window.__hybridWidgetBridgeSync();}catch(e){}return;}" +
                     "var KEY='hybridTrainingSystem';var last='';" +
                     "window.__hybridWidgetBridgeSync=function(){try{var raw=localStorage.getItem(KEY);if(raw&&raw!==last&&window.AndroidWidgetBridge){window.AndroidWidgetBridge.sync(raw);last=raw;}}catch(e){}};" +
@@ -59,25 +55,15 @@ public class MainActivity extends BridgeActivity {
     public class WidgetJavascriptBridge {
         @JavascriptInterface public void sync(String rawState) {
             if (rawState == null || rawState.length() == 0 || rawState.length() > 1024 * 1024) return;
-            try {
-                new org.json.JSONObject(rawState);
-                getSharedPreferences(STATE_PREFS, MODE_PRIVATE).edit().putString(STATE_KEY, rawState).putLong("updated_at", System.currentTimeMillis()).apply();
-                sendWidgetSync();
-            } catch (Exception ignored) {}
+            try { new org.json.JSONObject(rawState); getSharedPreferences(STATE_PREFS, MODE_PRIVATE).edit().putString(STATE_KEY, rawState).putLong("updated_at", System.currentTimeMillis()).apply(); sendWidgetSync(); } catch (Exception ignored) {}
         }
-
         @JavascriptInterface public void syncWorkoutLog(String rawLog) {
             if (rawLog == null || rawLog.length() > 20000) return;
-            getSharedPreferences(STATE_PREFS, MODE_PRIVATE).edit().putString("latest_log", rawLog).putLong("updated_at", System.currentTimeMillis()).apply();
-            sendWidgetSync();
+            getSharedPreferences(STATE_PREFS, MODE_PRIVATE).edit().putString("latest_log", rawLog).putLong("updated_at", System.currentTimeMillis()).apply(); sendWidgetSync();
         }
-
         @JavascriptInterface public void requestNotificationPermission() {
-            if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_REQUEST);
-            }
+            if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_REQUEST);
         }
-
         @JavascriptInterface public void scheduleDailyNotification(int hour, int minute, String title, String body) {
             requestNotificationPermission();
             AlarmManager am = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
@@ -86,20 +72,20 @@ public class MainActivity extends BridgeActivity {
             PendingIntent pi = PendingIntent.getBroadcast(MainActivity.this, DAILY_ALARM_REQUEST, i, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             Calendar next = Calendar.getInstance(); next.set(Calendar.HOUR_OF_DAY, Math.max(0, Math.min(23, hour))); next.set(Calendar.MINUTE, Math.max(0, Math.min(59, minute))); next.set(Calendar.SECOND, 0); next.set(Calendar.MILLISECOND, 0);
             if (next.getTimeInMillis() <= System.currentTimeMillis()) next.add(Calendar.DAY_OF_YEAR, 1);
-            am.cancel(pi);
-            am.setInexactRepeating(AlarmManager.RTC_WAKEUP, next.getTimeInMillis(), AlarmManager.INTERVAL_DAY, pi);
+            am.cancel(pi); am.setInexactRepeating(AlarmManager.RTC_WAKEUP, next.getTimeInMillis(), AlarmManager.INTERVAL_DAY, pi);
         }
-
         @JavascriptInterface public void cancelDailyNotification() {
             AlarmManager am = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
             Intent i = new Intent(MainActivity.this, WorkoutNotificationReceiver.class).setAction(WorkoutNotificationReceiver.ACTION_DAILY);
-            PendingIntent pi = PendingIntent.getBroadcast(MainActivity.this, DAILY_ALARM_REQUEST, i, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            am.cancel(pi);
+            PendingIntent pi = PendingIntent.getBroadcast(MainActivity.this, DAILY_ALARM_REQUEST, i, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE); am.cancel(pi);
+        }
+        @JavascriptInterface public void notifyRestFinished() {
+            requestNotificationPermission();
+            Intent i = new Intent(MainActivity.this, WorkoutNotificationReceiver.class).setAction(WorkoutNotificationReceiver.ACTION_REST);
+            i.putExtra("title", "Recupero terminato"); i.putExtra("body", "Pronto per la prossima serie.");
+            sendBroadcast(i);
         }
     }
 
-    private void sendWidgetSync() {
-        Intent syncIntent = new Intent(this, WidgetSyncReceiver.class).setAction(WidgetSyncReceiver.ACTION_SYNC);
-        sendBroadcast(syncIntent);
-    }
+    private void sendWidgetSync() { Intent syncIntent = new Intent(this, WidgetSyncReceiver.class).setAction(WidgetSyncReceiver.ACTION_SYNC); sendBroadcast(syncIntent); }
 }
