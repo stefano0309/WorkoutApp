@@ -29,7 +29,7 @@ jobs:
         run: npm install
 
       - name: Sync Capacitor native plugins
-        run: node node_modules/@capacitor/cli/bin/capacitor sync android
+        run: node ./node_modules/@capacitor/cli/bin/capacitor sync android
 
       - name: Make Gradle executable
         run: chmod +x android/gradlew
