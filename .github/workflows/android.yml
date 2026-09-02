@@ -37,7 +37,7 @@ jobs:
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
       - name: Sync Capacitor
-        run: npx cap sync android
+        run: node node_modules/@capacitor/cli/bin/capacitor.js sync android
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
