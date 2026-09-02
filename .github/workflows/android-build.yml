@@ -28,11 +28,8 @@ jobs:
       - name: Install JavaScript dependencies
         run: npm install
 
-      - name: Fix Capacitor CLI permissions
-        run: chmod +x node_modules/@capacitor/cli/bin/capacitor
-
       - name: Sync Capacitor native plugins
-        run: npx cap sync android
+        run: node node_modules/@capacitor/cli/bin/capacitor sync android
 
       - name: Make Gradle executable
         run: chmod +x android/gradlew
