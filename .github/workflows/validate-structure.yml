@@ -1,0 +1,22 @@
+name: Validate project structure
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check required files
+        run: |
+          test -f www/index.html
+          test -f www/workout-ux.js
+          test -f www/roadmap-features.js
+          test -f android/app/src/main/AndroidManifest.xml
+          test -f src/services/healthConnect.service.ts
+          test -f src/services/runAnalysis.service.ts
+          test -f src/services/badgeEngine.service.ts
+          test -f src/store/session.store.ts
