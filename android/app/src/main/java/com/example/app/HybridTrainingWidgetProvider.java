@@ -16,12 +16,14 @@ import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Locale;
 
-/** Home-screen widget for today's training and latest logged set. */
+/** Home-screen widget for today's training, latest set and Health Connect summary. */
 public class HybridTrainingWidgetProvider extends AppWidgetProvider {
     public static final String ACTION_OPEN_APP = "com.example.app.widget.OPEN_APP";
     private static final String STATE_PREFS = "hybrid_training_widget";
     private static final String STATE_KEY = "state";
     private static final String LOG_KEY = "latest_log";
+    private static final String HEALTH_PREFS = "health_connect_cache";
+    private static final String HEALTH_KEY = "summary";
     private static final String[] DAYS = {"Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"};
     private static final String[] TITLES = {"Upper Strength", "Lower Strength + Corsa Facile", "Interval Run", "Upper Strength + Corsa Facile", "Lower Strength + Corsa Progressiva", "Recupero Attivo (Run)", "Long Run"};
     private static final String[] FOCUS = {"Push-up / Pull-up", "Unilateralità", "Soglia / VO₂max", "Volume braccia/spalle", "Potenza + fatica", "Smaltimento", "Efficienza aerobica"};
@@ -71,6 +73,18 @@ public class HybridTrainingWidgetProvider extends AppWidgetProvider {
                     sync = "Ultima serie registrata";
                 } catch (Exception ignored) {}
             }
+            SharedPreferences healthPrefs = context.getSharedPreferences(HEALTH_PREFS, Context.MODE_PRIVATE);
+            String healthRaw = healthPrefs.getString(HEALTH_KEY, null);
+            String healthText = "Salute · —";
+            if (healthRaw != null) {
+                try {
+                    JSONObject health = new JSONObject(healthRaw);
+                    String steps = health.isNull("steps") ? "—" : String.valueOf(health.optLong("steps"));
+                    String weight = health.isNull("weightKg") ? "—" : String.valueOf(health.optDouble("weightKg"));
+                    healthText = "Salute · " + steps + " passi · " + weight + " kg";
+                } catch (Exception ignored) {}
+            }
+            views.setTextViewText(R.id.widget_health, healthText);
             views.setTextViewText(R.id.widget_sync, sync);
 
             Intent openIntent = new Intent(context, HybridTrainingWidgetProvider.class).setAction(ACTION_OPEN_APP).setPackage(context.getPackageName());
