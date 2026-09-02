@@ -16,11 +16,27 @@
     { day: 0, title: 'Long Run', exercises: [] }
   ];
 
-  const esc = (s) => String(s ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+  const esc = (s) => String(s ?? '').replace(/[&<>'\"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
   const readState = () => { try { return JSON.parse(localStorage.getItem(STATE_KEY) || '{}'); } catch { return {}; } };
-  const readLogs = () => { try { return JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch { return []; } };
+  const readLogs = () => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(LOG_KEY) || '[]');
+      if (!Array.isArray(raw)) return [];
+      const normalized = raw.map(entry => {
+        if (!entry || typeof entry !== 'object') return entry;
+        const exercise = String(entry.exercise ?? entry.label ?? '').trim();
+        const label = String(entry.label ?? entry.exercise ?? '').trim();
+        return {
+          ...entry,
+          ...(exercise ? { exercise } : {}),
+          ...(label ? { label } : {})
+        };
+      });
+      return normalized;
+    } catch { return []; }
+  };
   const todayWorkout = () => WORKOUTS[new Date().getDay()];
-  const lastForExercise = (exercise) => readLogs().filter(x => x.exercise === exercise).slice(-1)[0] || null;
+  const lastForExercise = (exercise) => readLogs().filter(x => (x.exercise || x.label) === exercise).slice(-1)[0] || null;
 
   function syncNative(log) {
     try {
@@ -89,7 +105,7 @@
 
   function renderHistory() {
     const logs = readLogs().slice(-8).reverse();
-    $('hts-log-history').innerHTML = logs.length ? `<div class="hts-muted mb-1 mt-3">Ultime serie</div>` + logs.map(x => `<div class="hts-log-row"><span><strong>${esc(x.exercise)}</strong><br><span class="hts-muted">${x.weight} kg × ${x.reps} · RPE ${x.rpe} · serie ${x.set}</span></span><span class="hts-muted">${new Date(x.timestamp).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'})}</span></div>`).join('') : '';
+    $('hts-log-history').innerHTML = logs.length ? `<div class="hts-muted mb-1 mt-3">Ultime serie</div>` + logs.map(x => `<div class="hts-log-row"><span><strong>${esc(x.exercise || x.label || 'Esercizio')}</strong><br><span class="hts-muted">${x.weight} kg × ${x.reps} · RPE ${x.rpe} · serie ${x.set}</span></span><span class="hts-muted">${new Date(x.timestamp).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'})}</span></div>`).join('') : '';
   }
 
   function selectExercise(name) {
@@ -124,9 +140,8 @@
     const weight = Math.max(0, Number($('hts-weight').value || 0));
     const set = Math.max(1, Number($('hts-set').value || 1));
     const state = readState();
-    const entry = { id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())), timestamp:new Date().toISOString(), date:new Date().toISOString().slice(0,10), exercise, weight, reps, rpe:selectedRpe, set, note:$('hts-note').value.trim(), workout:todayWorkout().title };
+    const entry = { id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())), timestamp:new Date().toISOString(), date:new Date().toISOString().slice(0,10), exercise, label:exercise, weight, reps, rpe:selectedRpe, set, note:$('hts-note').value.trim(), workout:todayWorkout().title };
     const logs = readLogs(); logs.push(entry); localStorage.setItem(LOG_KEY, JSON.stringify(logs));
-    // Mantieni anche lo storico principale della WebApp, senza cancellare i dati esistenti.
     state.log = Array.isArray(state.log) ? state.log : [];
     state.log.push({ type:'strength', ...entry });
     state.lastSavedAt = new Date().toISOString();
