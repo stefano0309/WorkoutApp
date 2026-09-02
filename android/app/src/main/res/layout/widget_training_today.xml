@@ -7,78 +7,13 @@
     android:padding="16dp"
     android:background="#121A2D">
 
-    <TextView
-        android:id="@+id/widget_type"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="ALLENAMENTO"
-        android:textColor="#FFFFFF"
-        android:textSize="12sp"
-        android:textStyle="bold" />
-
-    <TextView
-        android:id="@+id/widget_day"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:text="Oggi"
-        android:textColor="#FFFFFF"
-        android:textSize="20sp"
-        android:textStyle="bold" />
-
-    <TextView
-        android:id="@+id/widget_title"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:text="Allenamento di oggi"
-        android:textColor="#FFFFFF"
-        android:textSize="15sp" />
-
-    <TextView
-        android:id="@+id/widget_focus"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:text="Focus"
-        android:textColor="#CCCCCC"
-        android:textSize="12sp" />
-
-    <TextView
-        android:id="@+id/widget_cardio"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Cardio"
-        android:textColor="#CCCCCC"
-        android:textSize="12sp" />
-
-    <TextView
-        android:id="@+id/widget_date"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:text=""
-        android:textColor="#AAAAAA"
-        android:textSize="11sp" />
-
-    <TextView
-        android:id="@+id/widget_sync"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:text="Programma settimanale"
-        android:textColor="#AAAAAA"
-        android:textSize="10sp" />
-
-    <TextView
-        android:id="@+id/widget_open"
-        android:layout_width="match_parent"
-        android:layout_height="40dp"
-        android:layout_marginTop="8dp"
-        android:gravity="center"
-        android:text="APRI ALLENAMENTO"
-        android:textColor="#FFFFFF"
-        android:textSize="12sp"
-        android:textStyle="bold"
-        android:background="#FF5A36" />
+    <TextView android:id="@+id/widget_type" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="ALLENAMENTO" android:textColor="#FFFFFF" android:textSize="12sp" android:textStyle="bold" />
+    <TextView android:id="@+id/widget_day" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="Oggi" android:textColor="#FFFFFF" android:textSize="20sp" android:textStyle="bold" />
+    <TextView android:id="@+id/widget_title" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="Allenamento di oggi" android:textColor="#FFFFFF" android:textSize="15sp" />
+    <TextView android:id="@+id/widget_focus" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="Focus" android:textColor="#CCCCCC" android:textSize="12sp" />
+    <TextView android:id="@+id/widget_cardio" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Cardio" android:textColor="#CCCCCC" android:textSize="12sp" />
+    <TextView android:id="@+id/widget_health" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="Salute · —" android:textColor="#62D4FF" android:textSize="11sp" />
+    <TextView android:id="@+id/widget_date" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="" android:textColor="#AAAAAA" android:textSize="11sp" />
+    <TextView android:id="@+id/widget_sync" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="Programma settimanale" android:textColor="#AAAAAA" android:textSize="10sp" />
+    <TextView android:id="@+id/widget_open" android:layout_width="match_parent" android:layout_height="40dp" android:layout_marginTop="8dp" android:gravity="center" android:text="APRI ALLENAMENTO" android:textColor="#FFFFFF" android:textSize="12sp" android:textStyle="bold" android:background="#FF5A36" />
 </LinearLayout>
