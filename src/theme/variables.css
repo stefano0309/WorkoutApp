@@ -1,0 +1,16 @@
+:root {
+  --hts-primary: #ff5a36;
+  --hts-primary-soft: #ff7a52;
+  --hts-background: #0b1020;
+  --hts-surface: #121a2d;
+  --hts-surface-2: #19233a;
+  --hts-border: #2c3753;
+  --hts-text: #eef3ff;
+  --hts-muted: #9fb0d0;
+  --hts-accent-blue: #62d4ff;
+  --hts-radius-card: 16px;
+  --hts-radius-control: 12px;
+  --hts-space-1: 8px;
+  --hts-space-2: 16px;
+  --hts-space-3: 24px;
+}
