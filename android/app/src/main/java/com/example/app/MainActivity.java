@@ -61,6 +61,7 @@ public class MainActivity extends BridgeActivity {
                     "var r=document.createElement('script');r.src='roadmap-features.js';r.async=false;document.head.appendChild(r);" +
                     "var h=document.createElement('script');h.src='health-connect.service.js';h.async=false;document.head.appendChild(h);" +
                     "var hu=document.createElement('script');hu.src='health-connect-ui.js';hu.async=false;document.head.appendChild(hu);" +
+                    "var a=document.createElement('script');a.src='native-auth.js';a.async=false;document.head.appendChild(a);" +
                     "window.__htsNativeBoot=true;}" +
                     "if(window.__hybridWidgetBridgeInstalled){try{window.__hybridWidgetBridgeSync();}catch(e){}return;}" +
                     "var KEY='hybridTrainingSystem';var last='';" +
