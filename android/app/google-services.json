@@ -1,0 +1,40 @@
+{
+  "project_info": {
+    "project_number": "729092751447",
+    "firebase_url": "https://workout-7c6ec-default-rtdb.europe-west1.firebasedatabase.app",
+    "project_id": "workout-7c6ec",
+    "storage_bucket": "workout-7c6ec.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:729092751447:android:4bd0f5f424bbe87f1da312",
+        "android_client_info": {
+          "package_name": "com.stefano.workout"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "729092751447-2vvfvjqjgnpfilet54er8puetfetv4m9.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC732ku3jH6nX5Nmp6-JqYCzM38MV8loUY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "729092751447-2vvfvjqjgnpfilet54er8puetfetv4m9.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
