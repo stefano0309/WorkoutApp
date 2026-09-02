@@ -546,6 +546,38 @@
         background: rgba(98, 212, 255, 0.15);
         color: #62d4ff;
       }
+
+      /* ===== MENU COMPLETO (mobile) ===== */
+      .menu-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+      }
+      .menu-tile {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid var(--border-color);
+        border-radius: 14px;
+        padding: 14px 6px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        color: #eef3ff;
+        font-size: 0.72rem;
+        font-weight: 600;
+        text-align: center;
+      }
+      .menu-tile i {
+        font-size: 1.35rem;
+        color: var(--accent-orange-2);
+      }
+      .menu-tile.active {
+        border-color: var(--accent-orange);
+        background: rgba(255, 90, 54, 0.14);
+      }
+      .menu-tile.active i {
+        color: var(--accent-orange);
+      }
     </style>
   </head>
   <body>
@@ -618,6 +650,118 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 
+    <!--
+      Integrazione Firebase (Auth Google + Realtime Database).
+      Usa la sintassi modulare v9+: va caricata come modulo a parte perché
+      "import" non è disponibile negli script classici usati dal resto
+      dell'app. Espone un'API minima su window.__fb, consumata dall'oggetto
+      CloudSync nello script principale qui sotto.
+    -->
+    <script type="module">
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
+      import {
+        getAnalytics,
+        isSupported as analyticsIsSupported,
+      } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-analytics.js";
+      import {
+        getAuth,
+        GoogleAuthProvider,
+        signInWithPopup,
+        onAuthStateChanged,
+        signOut,
+      } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
+      import {
+        getDatabase,
+        ref,
+        set,
+        get,
+        update,
+        onValue,
+        off,
+      } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-database.js";
+
+      const firebaseConfig = {
+        apiKey: "AIzaSyCD7WjWdH_dDjUbfAs-xuMQHC8NWL8KYqQ",
+        authDomain: "workout-7c6ec.firebaseapp.com",
+        projectId: "workout-7c6ec",
+        storageBucket: "workout-7c6ec.firebasestorage.app",
+        messagingSenderId: "729092751447",
+        appId: "1:729092751447:web:1ca864dc1b2868291da312",
+        measurementId: "G-N8L226X7WH",
+      };
+
+      const app = initializeApp(firebaseConfig);
+      analyticsIsSupported()
+        .then((ok) => {
+          if (ok) getAnalytics(app);
+        })
+        .catch(() => {});
+
+      const auth = getAuth(app);
+      const db = getDatabase(app);
+      const provider = new GoogleAuthProvider();
+
+      const isNativeShell = () =>
+        !!(
+          window.Capacitor &&
+          window.Capacitor.isNativePlatform &&
+          window.Capacitor.isNativePlatform()
+        );
+
+      // API minima esposta allo script "classico" principale dell'app.
+      window.__fb = {
+        async signIn() {
+          if (isNativeShell()) {
+            // Il popup OAuth di Google non funziona in modo affidabile
+            // dentro una WebView nativa Capacitor (Google blocca i
+            // login da "embedded user agent" per policy di sicurezza).
+            // Per l'app Android/iOS reale serve il plugin nativo
+            // @capacitor-firebase/authentication: vedi la guida fornita.
+            throw new Error("native-google-signin-not-configured");
+          }
+          const res = await signInWithPopup(auth, provider);
+          return res.user;
+        },
+        signOutUser() {
+          return signOut(auth);
+        },
+        onAuthChange(cb) {
+          return onAuthStateChanged(auth, cb);
+        },
+        async readState(uid) {
+          const snap = await get(ref(db, "users/" + uid + "/state"));
+          return snap.exists() ? snap.val() : null;
+        },
+        writeState(uid, data) {
+          return set(ref(db, "users/" + uid + "/state"), data);
+        },
+        watchState(uid, cb) {
+          const r = ref(db, "users/" + uid + "/state");
+          onValue(r, (snap) => cb(snap.exists() ? snap.val() : null));
+          return () => off(r);
+        },
+        async readUsername(uid) {
+          const snap = await get(ref(db, "users/" + uid + "/profile/username"));
+          return snap.exists() ? snap.val() : null;
+        },
+        async claimUsername(uid, username) {
+          const key = username.trim().toLowerCase().replace(/\s+/g, "_");
+          if (!key) throw new Error("empty-username");
+          const takenSnap = await get(ref(db, "usernames/" + key));
+          if (takenSnap.exists() && takenSnap.val() !== uid) {
+            throw new Error("username-taken");
+          }
+          await set(ref(db, "usernames/" + key), uid);
+          await set(
+            ref(db, "users/" + uid + "/profile/username"),
+            username.trim(),
+          );
+          return username.trim();
+        },
+      };
+      window.dispatchEvent(new CustomEvent("firebase-ready"));
+    </script>
+
     <script>
       const STORAGE_KEY = "hybridTrainingSystem";
       const STORAGE_VERSION = 2;
@@ -677,6 +821,158 @@
           }
         },
       };
+
+      // ===== CLOUD SYNC (Firebase Auth Google + Realtime Database) =====
+      // Ponte tra lo stato locale e window.__fb (definito nello script
+      // module sopra). Strategia: last-write-wins basata su lastSavedAt.
+      // Le foto (base64) restano solo sul dispositivo: su Firebase
+      // sincronizziamo solo i metadati per restare entro limiti ragionevoli
+      // di Realtime Database (la sync completa delle immagini richiederebbe
+      // Firebase Storage: vedi lista migliorie).
+      const CloudSync = {
+        uploadTimer: null,
+        unsubscribe: null,
+        suppressNextRemoteApply: false,
+
+        ready() {
+          return new Promise((resolve) => {
+            if (window.__fb) return resolve();
+            window.addEventListener("firebase-ready", () => resolve(), {
+              once: true,
+            });
+          });
+        },
+
+        async init() {
+          await this.ready();
+          window.__fb.onAuthChange(async (user) => {
+            if (user) {
+              state.account.uid = user.uid;
+              state.account.email = user.email || null;
+              try {
+                const remote = await window.__fb.readState(user.uid);
+                if (remote && remote.lastSavedAt) {
+                  const localTime = state.lastSavedAt
+                    ? new Date(state.lastSavedAt).getTime()
+                    : 0;
+                  const remoteTime = new Date(remote.lastSavedAt).getTime();
+                  if (remoteTime > localTime) {
+                    this.suppressNextRemoteApply = true;
+                    const keepAccount = state.account;
+                    Object.keys(DEFAULT_STATE).forEach((k) => delete state[k]);
+                    Object.assign(state, clone(DEFAULT_STATE), remote, {
+                      _storageVersion: STORAGE_VERSION,
+                      account: keepAccount,
+                    });
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+                  }
+                }
+                const username = await window.__fb.readUsername(user.uid);
+                if (!username) {
+                  openUsernameModal(true);
+                } else {
+                  state.account.username = username;
+                }
+              } catch (e) {
+                console.error("Sincronizzazione iniziale fallita", e);
+              }
+              state.account.lastSyncAt = new Date().toISOString();
+              save();
+              render();
+              this.watch(user.uid);
+            } else {
+              this.stopWatch();
+              state.account = clone(DEFAULT_STATE.account);
+              save();
+              render();
+            }
+          });
+        },
+
+        watch(uid) {
+          this.stopWatch();
+          this.unsubscribe = window.__fb.watchState(uid, (remote) => {
+            if (!remote || !remote.lastSavedAt) return;
+            if (this.suppressNextRemoteApply) {
+              this.suppressNextRemoteApply = false;
+              return;
+            }
+            const localTime = state.lastSavedAt
+              ? new Date(state.lastSavedAt).getTime()
+              : 0;
+            const remoteTime = new Date(remote.lastSavedAt).getTime();
+            // margine di 1.5s per non riapplicare l'eco della propria scrittura
+            if (remoteTime > localTime + 1500) {
+              const keepAccount = state.account;
+              Object.keys(DEFAULT_STATE).forEach((k) => delete state[k]);
+              Object.assign(state, clone(DEFAULT_STATE), remote, {
+                _storageVersion: STORAGE_VERSION,
+                account: keepAccount,
+              });
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+              render();
+              toast("Dati aggiornati da un altro dispositivo");
+            }
+          });
+        },
+
+        stopWatch() {
+          if (this.unsubscribe) {
+            this.unsubscribe();
+            this.unsubscribe = null;
+          }
+        },
+
+        scheduleUpload() {
+          if (!state.account.uid || !window.__fb) return;
+          clearTimeout(this.uploadTimer);
+          this.uploadTimer = setTimeout(() => this.upload(), 1500);
+        },
+
+        async upload() {
+          if (!state.account.uid || !window.__fb) return;
+          try {
+            const { photos, ...syncable } = state;
+            await window.__fb.writeState(state.account.uid, {
+              ...syncable,
+              photos: (photos || []).map(({ thumb, ...meta }) => meta),
+            });
+            state.account.lastSyncAt = new Date().toISOString();
+            const el = document.getElementById("cloudSyncStatus");
+            if (el)
+              el.textContent =
+                "Ultima sincronizzazione: " +
+                new Date().toLocaleString("it-IT");
+          } catch (e) {
+            console.error("Upload cloud fallito", e);
+          }
+        },
+
+        async signIn() {
+          try {
+            await this.ready();
+            await window.__fb.signIn();
+          } catch (e) {
+            if (e && e.message === "native-google-signin-not-configured") {
+              alert(
+                "Il login Google nell'app nativa richiede un plugin dedicato (@capacitor-firebase/authentication). Per ora puoi accedere aprendo l'app dal browser.",
+              );
+            } else {
+              console.error(e);
+              alert("Accesso non riuscito. Riprova.");
+            }
+          }
+        },
+
+        async signOut() {
+          try {
+            await window.__fb.signOutUser();
+          } catch (e) {
+            console.error(e);
+          }
+        },
+      };
+
       const DEFAULT_STATE = {
         _storageVersion: STORAGE_VERSION,
         profile: null,
@@ -684,6 +980,8 @@
         meso: { week: 1, started: new Date().toISOString(), history: [] },
         sessions: {},
         log: [],
+        metrics: [], // { id, date:'YYYY-MM-DD', weight:number(kg), bodyFat:number(%)|null, note }
+        photos: [], // { id, date, w:number(kg)|null, thumb:base64DataURL, nativePath:string|null }
         statsView: {
           year: new Date().getFullYear(),
           month: new Date().getMonth(),
@@ -693,6 +991,7 @@
         settings: { dynamicAlert: true, sound: true },
         zoneTest: null,
         lastSavedAt: null,
+        account: { uid: null, username: null, email: null, lastSyncAt: null },
       };
 
       let bsModal = null;
@@ -714,7 +1013,10 @@
             timer: { ...DEFAULT_STATE.timer, ...(p.timer || {}) },
             settings: { ...DEFAULT_STATE.settings, ...(p.settings || {}) },
             log: Array.isArray(p.log) ? p.log : [],
+            metrics: Array.isArray(p.metrics) ? p.metrics : [],
+            photos: Array.isArray(p.photos) ? p.photos : [],
             statsView: { ...DEFAULT_STATE.statsView, ...(p.statsView || {}) },
+            account: { ...DEFAULT_STATE.account, ...(p.account || {}) },
           };
         } catch (e) {
           console.warn("localStorage read failed", e);
@@ -1132,6 +1434,8 @@
             console.error("Errore salvataggio nativo", e),
           );
         }
+        // sincronizzazione cloud (debounced, non blocca l'interfaccia)
+        CloudSync.scheduleUpload();
         updateMini();
       }
 
@@ -1424,6 +1728,7 @@
           { id: "mesociclo", label: "Mesociclo", icon: "calendar3" },
           { id: "workout", label: "Allenamento", icon: "lightning-charge" },
           { id: "statistiche", label: "Statistiche", icon: "bar-chart-line" },
+          { id: "progressi", label: "Peso & Foto", icon: "camera" },
           { id: "cardio", label: "Cardio & Zone", icon: "heart-pulse" },
           { id: "corsa", label: "Programma Corsa", icon: "map" },
           { id: "library", label: "Libreria", icon: "journal-bookmark" },
@@ -1448,19 +1753,38 @@
           )
           .join("");
 
+        const directBottomIds = [
+          "dashboard",
+          "workout",
+          "corsa",
+          "statistiche",
+        ];
         const bottomItems = [
           { id: "dashboard", label: "Home", icon: "house-door-fill" },
-          { id: "mesociclo", label: "Esplora", icon: "compass" },
+          { id: "workout", label: "Allena", icon: "lightning-charge-fill" },
+          { id: "corsa", label: "Corsa", icon: "map-fill" },
           { id: "statistiche", label: "Stats", icon: "bar-chart-fill" },
-          { id: "settings", label: "Profilo", icon: "person-fill" },
+          {
+            id: "menu",
+            label: "Menu",
+            icon: "grid-3x3-gap-fill",
+            action: "menu",
+          },
         ];
         const bottomNavEl = document.getElementById("bottomNav");
         if (bottomNavEl) {
           bottomNavEl.innerHTML = bottomItems
             .map((item) => {
-              const isActive = state.activePage === item.id;
+              const isActive =
+                item.action === "menu"
+                  ? !directBottomIds.includes(state.activePage)
+                  : state.activePage === item.id;
+              const onclick =
+                item.action === "menu"
+                  ? "openFullMenu()"
+                  : `route('${item.id}')`;
               return `
-    <button class="bottom-nav-item ${isActive ? "active" : ""}" onclick="route('${item.id}')">
+    <button class="bottom-nav-item ${isActive ? "active" : ""}" onclick="${onclick}">
       <i class="bi bi-${item.icon}"></i>${isActive ? `<span>${item.label}</span>` : ""}
     </button>`;
             })
@@ -1473,6 +1797,7 @@
           mesociclo,
           workout,
           statistiche,
+          progressi: progressiPage,
           cardio,
           corsa: corsaPage,
           library,
@@ -1491,6 +1816,9 @@
         }
         if (state.activePage === "workout") {
           setTimeout(renderPatternChips, 30);
+        }
+        if (state.activePage === "progressi") {
+          setTimeout(renderProgressChart, 50);
         }
       }
 
@@ -2746,6 +3074,337 @@
         );
       }
 
+      // ===== PROGRESSI: PESO, BODY FAT, FOTO SETTIMANALI =====
+      function metricSorted() {
+        return [...state.metrics].sort((a, b) => a.date.localeCompare(b.date));
+      }
+
+      function lastMetric() {
+        const arr = metricSorted();
+        return arr.length ? arr[arr.length - 1] : null;
+      }
+
+      function daysSinceLastPhoto() {
+        if (!state.photos.length) return Infinity;
+        const last = [...state.photos].sort((a, b) =>
+          b.date.localeCompare(a.date),
+        )[0];
+        return Math.floor(
+          (new Date(todayKey()) - new Date(last.date)) / 86400000,
+        );
+      }
+
+      function progressiPage() {
+        const last = lastMetric();
+        const prev = metricSorted().slice(-2)[0];
+        const weightDelta =
+          last && prev && prev !== last
+            ? +(last.weight - prev.weight).toFixed(1)
+            : null;
+        const photoDue = daysSinceLastPhoto() >= 7;
+
+        return (
+          pageHead(
+            "Peso & Foto Progressi",
+            "Traccia peso, body fat e la tua evoluzione fisica settimana per settimana",
+          ) +
+          `
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-sm-6 col-md-3">
+      <div class="card card-custom p-3 h-100">
+        <span class="text-secondary small text-uppercase">Peso Attuale</span>
+        <div class="metric-val text-white my-1">${last ? last.weight + " kg" : "—"}</div>
+        ${
+          weightDelta !== null
+            ? `<span class="small ${weightDelta <= 0 ? "text-success" : "text-warning"}"><i class="bi bi-arrow-${weightDelta <= 0 ? "down" : "up"}-short"></i>${Math.abs(weightDelta)} kg vs precedente</span>`
+            : `<span class="small text-secondary">Nessun dato precedente</span>`
+        }
+      </div>
+    </div>
+    <div class="col-12 col-sm-6 col-md-3">
+      <div class="card card-custom p-3 h-100">
+        <span class="text-secondary small text-uppercase">Body Fat</span>
+        <div class="metric-val text-info my-1">${last && last.bodyFat != null ? last.bodyFat + "%" : "—"}</div>
+        <span class="small text-secondary">ultima misurazione</span>
+      </div>
+    </div>
+    <div class="col-12 col-sm-6 col-md-3">
+      <div class="card card-custom p-3 h-100">
+        <span class="text-secondary small text-uppercase">Misurazioni</span>
+        <div class="metric-val text-white my-1">${state.metrics.length}</div>
+        <span class="small text-secondary">registrate finora</span>
+      </div>
+    </div>
+    <div class="col-12 col-sm-6 col-md-3">
+      <div class="card card-custom p-3 h-100 ${photoDue ? "border border-warning" : ""}">
+        <span class="text-secondary small text-uppercase">Foto Progressi</span>
+        <div class="metric-val ${photoDue ? "text-warning" : "text-success"} my-1">${state.photos.length}</div>
+        <span class="small ${photoDue ? "text-warning" : "text-secondary"}">${photoDue ? "Ne manca una questa settimana!" : "In pari con la settimana"}</span>
+      </div>
+    </div>
+  </div>
+
+  ${
+    photoDue
+      ? `
+  <div class="alert alert-warning border-0 bg-warning bg-opacity-10 text-warning mb-4">
+    <i class="bi bi-camera-fill me-2"></i>Sono passati 7+ giorni dall'ultima foto progressi: scattane una nuova per mantenere una timeline utile a valutare i cambiamenti.
+  </div>`
+      : ""
+  }
+
+  <div class="card card-custom p-4 mb-4">
+    <h5 class="mb-3"><i class="bi bi-clipboard2-pulse me-1"></i> Nuova Misurazione</h5>
+    <div class="row g-3 align-items-end">
+      <div class="col-6 col-md-3">
+        <label class="form-label text-secondary small">Data</label>
+        <input type="date" id="metricDate" class="form-control bg-dark text-light border-secondary" value="${todayKey()}">
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label text-secondary small">Peso (kg)</label>
+        <input type="number" step="0.1" min="0" id="metricWeight" class="form-control bg-dark text-light border-secondary" placeholder="es. 78.4" value="${last ? last.weight : ""}">
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label text-secondary small">Body Fat % (opz.)</label>
+        <input type="number" step="0.1" min="0" max="60" id="metricBf" class="form-control bg-dark text-light border-secondary" placeholder="es. 16.5" value="${last && last.bodyFat != null ? last.bodyFat : ""}">
+      </div>
+      <div class="col-6 col-md-3">
+        <button class="btn btn-primary w-100" onclick="addMetric()"><i class="bi bi-plus-lg me-1"></i> Salva</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card card-custom p-3 mb-4">
+    <h6 class="mb-3"><i class="bi bi-graph-up me-1"></i> Andamento Peso & Body Fat</h6>
+    <canvas id="chartWeightBf" height="220"></canvas>
+  </div>
+
+  <div class="card card-custom p-3 mb-4">
+    <h6 class="mb-3">Storico Misurazioni</h6>
+    ${
+      metricSorted().length
+        ? `
+    <div class="table-responsive">
+      <table class="table table-dark table-sm align-middle mb-0">
+        <thead><tr><th>Data</th><th>Peso</th><th>Body Fat</th><th></th></tr></thead>
+        <tbody>
+          ${metricSorted()
+            .slice()
+            .reverse()
+            .map(
+              (m) => `
+          <tr>
+            <td>${new Date(m.date).toLocaleDateString("it-IT")}</td>
+            <td>${m.weight} kg</td>
+            <td>${m.bodyFat != null ? m.bodyFat + "%" : "—"}</td>
+            <td class="text-end"><button class="btn btn-sm btn-outline-danger" onclick="deleteMetric('${m.id}')"><i class="bi bi-trash"></i></button></td>
+          </tr>`,
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>`
+        : `<p class="text-secondary small mb-0">Nessuna misurazione registrata: inizia oggi per costruire lo storico.</p>`
+    }
+  </div>
+
+  <div class="card card-custom p-4">
+    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+      <h5 class="mb-0"><i class="bi bi-images me-1"></i> Foto Progressi Settimanali</h5>
+      <button class="btn btn-outline-light btn-sm" onclick="document.getElementById('photoInput').click()">
+        <i class="bi bi-camera-fill me-1"></i> Scatta / Carica Foto
+      </button>
+      <input type="file" id="photoInput" accept="image/*" capture="environment" class="d-none" onchange="handlePhotoUpload(event)">
+    </div>
+    ${
+      state.photos.length
+        ? `
+    <div class="row g-3">
+      ${[...state.photos]
+        .sort((a, b) => b.date.localeCompare(a.date))
+        .map(
+          (p) => `
+      <div class="col-6 col-md-3">
+        <div class="card card-custom p-2 h-100">
+          <img src="${p.thumb}" class="w-100 rounded-3 mb-2" style="aspect-ratio:3/4;object-fit:cover" alt="Foto progressi ${p.date}">
+          <div class="small text-secondary text-center">${new Date(p.date).toLocaleDateString("it-IT")}</div>
+          ${p.w ? `<div class="small text-center text-info">${p.w} kg</div>` : ""}
+          <button class="btn btn-sm btn-outline-danger mt-2" onclick="deletePhoto('${p.id}')"><i class="bi bi-trash"></i></button>
+        </div>
+      </div>`,
+        )
+        .join("")}
+    </div>`
+        : `<p class="text-secondary small mb-0">Nessuna foto ancora. Scattane una a settimana, sempre nella stessa posa/luce, per confronti affidabili nel tempo.</p>`
+    }
+  </div>`
+        );
+      }
+
+      function addMetric() {
+        const date = document.getElementById("metricDate").value || todayKey();
+        const weight = parseFloat(
+          document.getElementById("metricWeight").value,
+        );
+        const bfRaw = document.getElementById("metricBf").value;
+        const bodyFat = bfRaw !== "" ? parseFloat(bfRaw) : null;
+        if (!weight || weight <= 0) {
+          toast("Inserisci un peso valido");
+          return;
+        }
+        const existingIdx = state.metrics.findIndex((m) => m.date === date);
+        const entry = {
+          id:
+            existingIdx >= 0 ? state.metrics[existingIdx].id : "m" + Date.now(),
+          date,
+          weight,
+          bodyFat,
+        };
+        if (existingIdx >= 0) state.metrics[existingIdx] = entry;
+        else state.metrics.push(entry);
+        save();
+        toast("Misurazione salvata");
+        render();
+      }
+
+      function deleteMetric(id) {
+        state.metrics = state.metrics.filter((m) => m.id !== id);
+        save();
+        render();
+      }
+
+      function compressImage(file, maxWidth, quality) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onerror = reject;
+          reader.onload = () => {
+            const img = new Image();
+            img.onerror = reject;
+            img.onload = () => {
+              const scale = Math.min(1, maxWidth / img.width);
+              const canvas = document.createElement("canvas");
+              canvas.width = img.width * scale;
+              canvas.height = img.height * scale;
+              const ctx = canvas.getContext("2d");
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+              resolve(canvas.toDataURL("image/jpeg", quality));
+            };
+            img.src = reader.result;
+          };
+          reader.readAsDataURL(file);
+        });
+      }
+
+      async function handlePhotoUpload(ev) {
+        const file = ev.target.files[0];
+        ev.target.value = "";
+        if (!file) return;
+        try {
+          const thumb = await compressImage(file, 800, 0.72);
+          const entry = {
+            id: "p" + Date.now(),
+            date: todayKey(),
+            w: lastMetric() ? lastMetric().weight : null,
+            thumb, // in locale conserviamo sempre una miniatura compressa
+            nativePath: null,
+          };
+          // Su dispositivo nativo salviamo anche il file originale nello
+          // storage persistente dell'app (più capiente del solo localStorage)
+          if (NativeStorage.isNative()) {
+            try {
+              const { Filesystem, Directory } = window.Capacitor.Plugins;
+              const path = "progress-photos/" + entry.id + ".jpg";
+              const base64 = thumb.split(",")[1];
+              await Filesystem.writeFile({
+                path,
+                data: base64,
+                directory: Directory.Data,
+                recursive: true,
+              });
+              entry.nativePath = path;
+            } catch (e) {
+              console.error("Salvataggio nativo foto fallito", e);
+            }
+          }
+          state.photos.push(entry);
+          save();
+          toast("Foto progressi salvata");
+          render();
+        } catch (e) {
+          console.error(e);
+          toast("Errore durante il caricamento della foto");
+        }
+      }
+
+      function deletePhoto(id) {
+        state.photos = state.photos.filter((p) => p.id !== id);
+        save();
+        render();
+      }
+
+      let progressChart = null;
+      function renderProgressChart() {
+        if (typeof Chart === "undefined") return;
+        if (progressChart) {
+          progressChart.destroy();
+          progressChart = null;
+        }
+        const canvas = document.getElementById("chartWeightBf");
+        if (!canvas) return;
+        const data = metricSorted();
+        progressChart = new Chart(canvas, {
+          type: "line",
+          data: {
+            labels: data.map((m) =>
+              new Date(m.date).toLocaleDateString("it-IT", {
+                day: "2-digit",
+                month: "2-digit",
+              }),
+            ),
+            datasets: [
+              {
+                label: "Peso (kg)",
+                data: data.map((m) => m.weight),
+                borderColor: "#ff5a36",
+                backgroundColor: "rgba(255,90,54,.12)",
+                yAxisID: "y",
+                tension: 0.3,
+                fill: true,
+                pointRadius: 3,
+              },
+              {
+                label: "Body Fat (%)",
+                data: data.map((m) => m.bodyFat),
+                borderColor: "#62d4ff",
+                backgroundColor: "rgba(98,212,255,.1)",
+                yAxisID: "y1",
+                tension: 0.3,
+                spanGaps: true,
+                pointRadius: 3,
+              },
+            ],
+          },
+          options: {
+            plugins: { legend: { labels: { color: "#eef3ff" } } },
+            scales: {
+              x: { ticks: { color: "#9fb0d0" }, grid: { color: "#22304f" } },
+              y: {
+                type: "linear",
+                position: "left",
+                ticks: { color: "#ff8f6b" },
+                grid: { color: "#22304f" },
+              },
+              y1: {
+                type: "linear",
+                position: "right",
+                ticks: { color: "#62d4ff" },
+                grid: { drawOnChartArea: false },
+              },
+            },
+          },
+        });
+      }
+
       function zoneAlert() {
         alert(
           "ALLERTA: FC in Z3 durante una corsa facile. Rallenta e torna in Z1–Z2.",
@@ -2993,12 +3652,41 @@
       }
 
       function settings() {
+        const acc = state.account;
         return (
           pageHead(
             "Impostazioni",
             "Persistenza dati locale e configurazione interfacce",
           ) +
           `
+  <div class="card card-custom p-4 mb-4">
+    <h5 class="mb-3"><i class="bi bi-cloud-check me-1"></i> Account & Sincronizzazione Cloud</h5>
+    ${
+      acc.uid
+        ? `
+    <div class="d-flex align-items-center gap-3 flex-wrap">
+      <div class="avatar-circle">${esc((acc.username || acc.email || "U").slice(0, 2).toUpperCase())}</div>
+      <div class="flex-grow-1">
+        <div class="fw-bold text-white">${esc(acc.username || "Username non impostato")}</div>
+        <div class="small text-secondary">${esc(acc.email || "")}</div>
+        <div class="small text-secondary" id="cloudSyncStatus">
+          ${acc.lastSyncAt ? "Ultima sincronizzazione: " + new Date(acc.lastSyncAt).toLocaleString("it-IT") : "In attesa di sincronizzazione…"}
+        </div>
+      </div>
+      <div class="d-flex gap-2">
+        <button class="btn btn-sm btn-outline-light" onclick="openUsernameModal()"><i class="bi bi-pencil me-1"></i> Cambia username</button>
+        <button class="btn btn-sm btn-outline-danger" onclick="CloudSync.signOut()"><i class="bi bi-box-arrow-right me-1"></i> Esci</button>
+      </div>
+    </div>`
+        : `
+    <p class="text-secondary small mb-3">Accedi con Google per sincronizzare i tuoi dati (allenamenti, peso, foto) tra più dispositivi collegati allo stesso account.</p>
+    <button class="btn btn-light fw-bold" onclick="CloudSync.signIn()">
+      <i class="bi bi-google me-2"></i> Accedi con Google
+    </button>
+    <div class="small text-secondary mt-2" id="cloudSyncStatus"></div>`
+    }
+  </div>
+
   <div class="card card-custom p-4 mb-4">
     <div class="row g-3 mb-4">
       <div class="col-12 col-md-6">
@@ -3026,7 +3714,7 @@
   </div>
 
   <div class="alert alert-dark border border-secondary text-secondary small">
-    <i class="bi bi-device-ssd me-1"></i> I dati vengono memorizzati nel <code>localStorage</code> del browser. Può essere distribuito come PWA o wrapper Capacitor per iOS/Android.
+    <i class="bi bi-device-ssd me-1"></i> I dati vengono memorizzati nel <code>localStorage</code> del browser (e, se disponibile, nello storage nativo del dispositivo). Se hai eseguito l'accesso, vengono anche sincronizzati su Firebase Realtime Database.
   </div>`
         );
       }
@@ -3091,6 +3779,52 @@
       function closeModal() {
         if (bsModal) {
           bsModal.hide();
+        }
+      }
+
+      function openUsernameModal(isFirstTime) {
+        openModal(`
+  <div class="modal-header border-secondary">
+    <h5 class="modal-title"><i class="bi bi-person-badge-fill text-info me-2"></i>${isFirstTime ? "Scegli il tuo username" : "Cambia username"}</h5>
+    ${isFirstTime ? "" : '<button type="button" class="btn-close btn-close-white" onclick="closeModal()"></button>'}
+  </div>
+  <div class="modal-body">
+    <p class="text-secondary small">Identifica il tuo profilo sincronizzato: deve essere unico tra tutti gli utenti dell'app.</p>
+    <input type="text" id="usernameInput" class="form-control bg-dark text-light border-secondary mb-2" placeholder="es. stefano_runner" value="${esc(state.account.username || "")}">
+    <div class="small text-danger" id="usernameError"></div>
+  </div>
+  <div class="modal-footer border-secondary">
+    <button class="btn btn-primary w-100" onclick="submitUsername()"><i class="bi bi-check-lg me-1"></i> Conferma</button>
+  </div>`);
+      }
+
+      async function submitUsername() {
+        const val = document.getElementById("usernameInput").value.trim();
+        const errEl = document.getElementById("usernameError");
+        if (!val) {
+          errEl.textContent = "Inserisci uno username.";
+          return;
+        }
+        if (!state.account.uid || !window.__fb) {
+          errEl.textContent =
+            "Devi essere connesso per impostare uno username.";
+          return;
+        }
+        try {
+          const confirmed = await window.__fb.claimUsername(
+            state.account.uid,
+            val,
+          );
+          state.account.username = confirmed;
+          save();
+          closeModal();
+          render();
+          toast("Username salvato: " + confirmed);
+        } catch (e) {
+          errEl.textContent =
+            e && e.message === "username-taken"
+              ? "Username già in uso, scegline un altro."
+              : "Errore, riprova.";
         }
       }
 
@@ -3163,6 +3897,88 @@
         openModal(quickLogSheet());
       }
 
+      // ===== MENU COMPLETO (mobile) =====
+      // La bottom nav mostra solo 4 scorciatoie dirette; questo foglio dà
+      // accesso rapido a TUTTE le sezioni dell'app, organizzate per
+      // categoria, cosicché nessuna pagina resti "nascosta" su schermi
+      // piccoli dove la sidebar non è visibile.
+      function openFullMenu() {
+        const groups = [
+          {
+            title: "Percorso",
+            items: [
+              { id: "dashboard", label: "Dashboard", icon: "speedometer2" },
+              {
+                id: "assessment",
+                label: "Assessment",
+                icon: "clipboard-check",
+              },
+              { id: "mesociclo", label: "Mesociclo", icon: "calendar3" },
+              { id: "retest", label: "Re-test", icon: "arrow-repeat" },
+            ],
+          },
+          {
+            title: "Allenamento",
+            items: [
+              { id: "workout", label: "Allenamento", icon: "lightning-charge" },
+              { id: "library", label: "Libreria", icon: "journal-bookmark" },
+              { id: "core", label: "Core", icon: "shield-shaded" },
+              { id: "prevenzione", label: "Prevenzione", icon: "bandaid" },
+            ],
+          },
+          {
+            title: "Corsa & Cardio",
+            items: [
+              { id: "corsa", label: "Corsa", icon: "map" },
+              { id: "cardio", label: "Cardio & Zone", icon: "heart-pulse" },
+            ],
+          },
+          {
+            title: "Salute & Progressi",
+            items: [
+              { id: "recupero", label: "Recupero", icon: "battery-charging" },
+              { id: "progressi", label: "Peso & Foto", icon: "camera" },
+              {
+                id: "statistiche",
+                label: "Statistiche",
+                icon: "bar-chart-line",
+              },
+            ],
+          },
+          {
+            title: "Altro",
+            items: [{ id: "settings", label: "Impostazioni", icon: "gear" }],
+          },
+        ];
+
+        openModal(`
+  <div class="modal-header border-secondary">
+    <h5 class="modal-title"><i class="bi bi-grid-3x3-gap-fill text-info me-2"></i>Tutte le sezioni</h5>
+    <button type="button" class="btn-close btn-close-white" onclick="closeModal()"></button>
+  </div>
+  <div class="modal-body">
+    ${groups
+      .map(
+        (g) => `
+    <div class="mb-4">
+      <div class="small text-secondary text-uppercase mb-2">${g.title}</div>
+      <div class="menu-grid">
+        ${g.items
+          .map(
+            (it) => `
+        <button class="menu-tile ${state.activePage === it.id ? "active" : ""}" onclick="closeModal(); route('${it.id}')">
+          <i class="bi bi-${it.icon}"></i>
+          <span>${it.label}</span>
+        </button>`,
+          )
+          .join("")}
+      </div>
+    </div>`,
+      )
+      .join("")}
+  </div>`);
+      }
+
       function quickLogRun(category, dayLabel) {
         logRun(category, dayLabel);
         openModal(quickLogSheet());
@@ -3171,6 +3987,7 @@
       render();
       updateSaveIndicator("ok");
       hydrateFromNativeStorage();
+      CloudSync.init();
 
       async function hydrateFromNativeStorage() {
         if (!NativeStorage.isNative()) return;
