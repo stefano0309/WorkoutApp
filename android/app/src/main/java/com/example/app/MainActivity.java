@@ -56,8 +56,11 @@ public class MainActivity extends BridgeActivity {
     private void injectWidgetSyncScript(final WebView webView, long delayMs) {
         HANDLER.postDelayed(() -> {
             String script = "javascript:(function(){" +
-                    "if(!window.__htsNativeBoot){var s=document.createElement('script');s.src='workout-ux.js';s.async=false;document.head.appendChild(s);" +
-                    "var r=document.createElement('script');r.src='roadmap-features.js';r.async=false;document.head.appendChild(r);window.__htsNativeBoot=true;}" +
+                    "if(!window.__htsNativeBoot){" +
+                    "var s=document.createElement('script');s.src='workout-ux.js';s.async=false;document.head.appendChild(s);" +
+                    "var r=document.createElement('script');r.src='roadmap-features.js';r.async=false;document.head.appendChild(r);" +
+                    "var h=document.createElement('script');h.src='health-connect.service.js';h.async=false;document.head.appendChild(h);" +
+                    "window.__htsNativeBoot=true;}" +
                     "if(window.__hybridWidgetBridgeInstalled){try{window.__hybridWidgetBridgeSync();}catch(e){}return;}" +
                     "var KEY='hybridTrainingSystem';var last='';" +
                     "window.__hybridWidgetBridgeSync=function(){try{var raw=localStorage.getItem(KEY);if(raw&&raw!==last&&window.AndroidWidgetBridge){window.AndroidWidgetBridge.sync(raw);last=raw;}}catch(e){}};" +
