@@ -1,7 +1,7 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "com.example.app"
+    namespace = "com.stefano.workout"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
         applicationId "com.stefano.workout"
