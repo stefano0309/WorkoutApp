@@ -2,8 +2,8 @@
 <resources>
     <string name="app_name">Hybrid Training System</string>
     <string name="title_activity_main">Hybrid Training System</string>
-    <string name="package_name">com.example.app</string>
-    <string name="custom_url_scheme">com.example.app</string>
+    <string name="package_name">com.stefano.workout</string>
+    <string name="custom_url_scheme">com.stefano.workout</string>
     <string name="widget_training_today_name">Allenamento di oggi</string>
     <string name="widget_training_today_description">Allenamento di oggi — Hybrid Training System</string>
 </resources>
