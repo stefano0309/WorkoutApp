@@ -63,7 +63,9 @@ public class HybridTrainingWidgetProvider extends AppWidgetProvider {
             if (latest != null) {
                 try {
                     JSONObject log = new JSONObject(latest);
-                    String exercise = log.optString("exercise", "Serie registrata");
+                    String exercise = log.optString("exercise", "").trim();
+                    if (exercise.isEmpty()) exercise = log.optString("label", "").trim();
+                    if (exercise.isEmpty()) exercise = "Serie registrata";
                     int reps = log.optInt("reps", 0);
                     double weight = log.optDouble("weight", 0);
                     double rpe = log.optDouble("rpe", 0);
