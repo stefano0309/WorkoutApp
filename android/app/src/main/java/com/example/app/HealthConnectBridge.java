@@ -3,6 +3,7 @@ package com.example.app;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.health.connect.HealthConnectManager;
 import android.health.connect.ReadRecordsRequestUsingFilters;
 import android.health.connect.ReadRecordsResponse;
@@ -21,24 +22,14 @@ import org.json.JSONObject;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.time.ZoneOffset;
-import java.time.ZonedDateTime;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-/**
- * Real Health Connect importer for Android 14+ platform Health Connect APIs.
- * Imports weight, steps, sleep sessions/stages, exercise sessions and embedded routes.
- * Exercise routes which require explicit user consent can be requested through requestExerciseRoute().
- */
+/** Real Health Connect importer for sleep, exercise sessions and exercise GPS routes. */
 public final class HealthConnectBridge {
     private static final String PREFS = "health_connect_cache";
     private static final String SUMMARY_KEY = "summary";
@@ -50,9 +41,7 @@ public final class HealthConnectBridge {
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private volatile String pendingRouteSessionId;
 
-    public HealthConnectBridge(Activity activity) {
-        this.activity = activity;
-    }
+    public HealthConnectBridge(Activity activity) { this.activity = activity; }
 
     @JavascriptInterface
     public void requestHealthPermissions() {
@@ -69,8 +58,7 @@ public final class HealthConnectBridge {
 
     @JavascriptInterface
     public String readHealthSummary() {
-        return activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(SUMMARY_KEY, null);
+        return activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(SUMMARY_KEY, null);
     }
 
     @JavascriptInterface
@@ -78,26 +66,18 @@ public final class HealthConnectBridge {
         JSONObject result = new JSONObject();
         try {
             result.put("supported", Build.VERSION.SDK_INT >= 34);
-            result.put("routePermission", Build.VERSION.SDK_INT >= 35 &&
-                    activity.checkSelfPermission("android.permission.health.READ_EXERCISE_ROUTES") == android.content.pm.PackageManager.PERMISSION_GRANTED);
-            result.put("readExercise", Build.VERSION.SDK_INT >= 34 &&
-                    activity.checkSelfPermission("android.permission.health.READ_EXERCISE") == android.content.pm.PackageManager.PERMISSION_GRANTED);
-            result.put("readSleep", Build.VERSION.SDK_INT >= 34 &&
-                    activity.checkSelfPermission("android.permission.health.READ_SLEEP") == android.content.pm.PackageManager.PERMISSION_GRANTED);
-        } catch (Throwable ignored) {
-        }
+            result.put("readExercise", Build.VERSION.SDK_INT >= 34 && activity.checkSelfPermission("android.permission.health.READ_EXERCISE") == android.content.pm.PackageManager.PERMISSION_GRANTED);
+            result.put("readSleep", Build.VERSION.SDK_INT >= 34 && activity.checkSelfPermission("android.permission.health.READ_SLEEP") == android.content.pm.PackageManager.PERMISSION_GRANTED);
+            result.put("routePermission", Build.VERSION.SDK_INT >= 35 && activity.checkSelfPermission("android.permission.health.READ_EXERCISE_ROUTES") == android.content.pm.PackageManager.PERMISSION_GRANTED);
+        } catch (Throwable ignored) { }
         return result.toString();
     }
 
     @JavascriptInterface
-    public void syncHealthConnect() {
-        syncHealthConnect(DEFAULT_LOOKBACK_DAYS);
-    }
+    public void syncHealthConnect() { syncHealthConnect(DEFAULT_LOOKBACK_DAYS); }
 
     @JavascriptInterface
-    public void syncHealthConnectDays(int days) {
-        syncHealthConnect(Math.max(1, Math.min(365, days)));
-    }
+    public void syncHealthConnectDays(int days) { syncHealthConnect(Math.max(1, Math.min(365, days))); }
 
     private void syncHealthConnect(long lookbackDays) {
         if (Build.VERSION.SDK_INT < 34) return;
@@ -105,13 +85,9 @@ public final class HealthConnectBridge {
             try {
                 HealthConnectManager manager = activity.getSystemService(HealthConnectManager.class);
                 if (manager == null) return;
-
                 Instant end = Instant.now();
                 Instant start = end.minus(Duration.ofDays(lookbackDays));
-                TimeInstantRangeFilter range = new TimeInstantRangeFilter.Builder()
-                        .setStartTime(start)
-                        .setEndTime(end)
-                        .build();
+                TimeInstantRangeFilter range = new TimeInstantRangeFilter.Builder().setStartTime(start).setEndTime(end).build();
 
                 JSONObject result = readCachedSummary();
                 result.put("importedAt", end.toString());
@@ -121,33 +97,29 @@ public final class HealthConnectBridge {
                 Double weight = readLatestWeight(manager, range);
                 if (weight != null) result.put("weightKg", weight);
 
-                List<SleepSessionRecord> sleepRecords = readAllRecords(manager, SleepSessionRecord.class, range);
+                List<SleepSessionRecord> sleeps = readAllRecords(manager, SleepSessionRecord.class, range);
                 JSONArray sleepSessions = new JSONArray();
-                for (SleepSessionRecord record : sleepRecords) {
-                    sleepSessions.put(serializeSleep(record));
-                }
+                for (SleepSessionRecord record : sleeps) sleepSessions.put(serializeSleep(record));
                 result.put("sleepSessions", sleepSessions);
-                result.put("sleepMinutes", totalSleepMinutes(sleepRecords));
-                JSONObject latestSleep = latestSleep(sleepRecords);
-                if (latestSleep != null) result.put("lastSleep", latestSleep);
+                result.put("sleepMinutes", totalSleepMinutes(sleeps));
+                if (!sleeps.isEmpty()) result.put("lastSleep", serializeSleep(sleeps.get(sleeps.size() - 1)));
 
-                List<ExerciseSessionRecord> exerciseRecords = readAllRecords(manager, ExerciseSessionRecord.class, range);
-                JSONArray sessions = new JSONArray();
-                JSONArray runningSessions = new JSONArray();
-                for (ExerciseSessionRecord record : exerciseRecords) {
+                List<ExerciseSessionRecord> exercises = readAllRecords(manager, ExerciseSessionRecord.class, range);
+                JSONArray allExercises = new JSONArray();
+                JSONArray running = new JSONArray();
+                for (ExerciseSessionRecord record : exercises) {
                     JSONObject serialized = serializeExercise(record);
-                    sessions.put(serialized);
-                    if (isRunning(record)) runningSessions.put(serialized);
+                    allExercises.put(serialized);
+                    if (isRunning(record)) running.put(serialized);
                 }
-                result.put("exerciseSessions", sessions);
-                result.put("runningSessions", runningSessions);
-                result.put("exerciseCount", exerciseRecords.size());
-
+                result.put("exerciseSessions", allExercises);
+                result.put("runningSessions", running);
+                result.put("exerciseCount", exercises.size());
                 persistAndDispatch(result);
-            } catch (SecurityException securityException) {
-                saveError("permission_denied", securityException.getMessage());
-            } catch (Throwable error) {
-                saveError("sync_failed", error.toString());
+            } catch (SecurityException e) {
+                saveError("permission_denied", e.getMessage());
+            } catch (Throwable e) {
+                saveError("sync_failed", e.toString());
             }
         });
     }
@@ -161,69 +133,52 @@ public final class HealthConnectBridge {
                 Intent intent = new Intent(HealthConnectManager.ACTION_REQUEST_EXERCISE_ROUTE);
                 intent.putExtra(HealthConnectManager.EXTRA_SESSION_ID, sessionId);
                 activity.startActivityForResult(intent, ROUTE_REQUEST);
-            } catch (Throwable error) {
-                saveError("route_request_failed", error.toString());
+            } catch (Throwable e) {
+                saveError("route_request_failed", e.toString());
             }
         });
     }
 
-    /** Called by MainActivity for the route consent result. */
     public void handleActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode != ROUTE_REQUEST || resultCode != Activity.RESULT_OK || data == null) return;
-        if (Build.VERSION.SDK_INT < 34) return;
+        if (requestCode != ROUTE_REQUEST || resultCode != Activity.RESULT_OK || data == null || Build.VERSION.SDK_INT < 34) return;
         try {
-            ExerciseRoute route = data.getParcelableExtra(
-                    HealthConnectManager.EXTRA_EXERCISE_ROUTE, ExerciseRoute.class);
+            ExerciseRoute route = data.getParcelableExtra(HealthConnectManager.EXTRA_EXERCISE_ROUTE, ExerciseRoute.class);
             if (route == null) return;
             JSONObject routeJson = serializeRoute(route);
             routeJson.put("sessionId", pendingRouteSessionId);
             upsertRouteIntoCache(pendingRouteSessionId, routeJson);
             dispatchToWebView("health-connect-route", routeJson);
-        } catch (Throwable error) {
-            saveError("route_import_failed", error.toString());
+        } catch (Throwable e) {
+            saveError("route_import_failed", e.toString());
         } finally {
             pendingRouteSessionId = null;
         }
     }
 
-    private List<SleepSessionRecord> readAllSleep(HealthConnectManager manager, TimeInstantRangeFilter range) throws Exception {
-        return readAllRecords(manager, SleepSessionRecord.class, range);
-    }
-
-    private <T extends android.health.connect.datatypes.Record> List<T> readAllRecords(
-            HealthConnectManager manager, Class<T> recordType, TimeInstantRangeFilter range) throws Exception {
+    private <T extends android.health.connect.datatypes.Record> List<T> readAllRecords(HealthConnectManager manager, Class<T> recordType, TimeInstantRangeFilter range) throws Exception {
         List<T> all = new ArrayList<>();
         long token = -1;
         do {
             CountDownLatch latch = new CountDownLatch(1);
             List<T> page = new ArrayList<>();
-            long[] next = new long[]{-1};
-            Throwable[] error = new Throwable[]{null};
-
-            ReadRecordsRequestUsingFilters.Builder<T> builder =
-                    new ReadRecordsRequestUsingFilters.Builder<>(recordType)
-                            .setTimeRangeFilter(range)
-                            .setPageSize(5000);
-            if (token >= 0) builder.setPageToken(token);
-            if (token < 0) builder.setAscending(true);
-
-            manager.readRecords(builder.build(), activity.getMainExecutor(),
-                    new android.os.OutcomeReceiver<ReadRecordsResponse<T>, android.health.connect.HealthConnectException>() {
-                        @Override public void onResult(ReadRecordsResponse<T> response) {
-                            page.addAll(response.getRecords());
-                            next[0] = response.getNextPageToken();
-                            latch.countDown();
-                        }
-
-                        @Override public void onError(android.health.connect.HealthConnectException e) {
-                            error[0] = e;
-                            latch.countDown();
-                        }
-                    });
-
-            if (!latch.await(30, TimeUnit.SECONDS)) {
-                throw new IllegalStateException("Health Connect read timeout for " + recordType.getSimpleName());
-            }
+            long[] next = {-1};
+            Throwable[] error = {null};
+            ReadRecordsRequestUsingFilters.Builder<T> builder = new ReadRecordsRequestUsingFilters.Builder<>(recordType)
+                    .setTimeRangeFilter(range)
+                    .setPageSize(5000);
+            if (token >= 0) builder.setPageToken(token); else builder.setAscending(true);
+            manager.readRecords(builder.build(), activity.getMainExecutor(), new android.os.OutcomeReceiver<ReadRecordsResponse<T>, android.health.connect.HealthConnectException>() {
+                @Override public void onResult(ReadRecordsResponse<T> response) {
+                    page.addAll(response.getRecords());
+                    next[0] = response.getNextPageToken();
+                    latch.countDown();
+                }
+                @Override public void onError(android.health.connect.HealthConnectException e) {
+                    error[0] = e;
+                    latch.countDown();
+                }
+            });
+            if (!latch.await(30, TimeUnit.SECONDS)) throw new IllegalStateException("Health Connect read timeout: " + recordType.getSimpleName());
             if (error[0] != null) throw new Exception(error[0]);
             all.addAll(page);
             token = next[0];
@@ -233,24 +188,22 @@ public final class HealthConnectBridge {
 
     private long readStepsAggregate(HealthConnectManager manager, TimeInstantRangeFilter range) throws Exception {
         CountDownLatch latch = new CountDownLatch(1);
-        long[] total = new long[]{0};
-        Throwable[] error = new Throwable[]{null};
-        android.health.connect.AggregateRecordsRequest<android.health.connect.datatypes.Record> request =
-                new android.health.connect.AggregateRecordsRequest.Builder<android.health.connect.datatypes.Record>(range)
-                        .addAggregationType(StepsRecord.STEPS_COUNT_TOTAL)
-                        .build();
-        manager.aggregate(request, activity.getMainExecutor(),
-                new android.os.OutcomeReceiver<android.health.connect.AggregateRecordsResponse<android.health.connect.datatypes.Record>, android.health.connect.HealthConnectException>() {
-                    @Override public void onResult(android.health.connect.AggregateRecordsResponse<android.health.connect.datatypes.Record> response) {
-                        Long value = response.get(StepsRecord.STEPS_COUNT_TOTAL);
-                        total[0] = value == null ? 0 : value;
-                        latch.countDown();
-                    }
-                    @Override public void onError(android.health.connect.HealthConnectException e) {
-                        error[0] = e;
-                        latch.countDown();
-                    }
-                });
+        long[] total = {0};
+        Throwable[] error = {null};
+        android.health.connect.AggregateRecordsRequest request = new android.health.connect.AggregateRecordsRequest.Builder(range)
+                .addAggregationType(StepsRecord.STEPS_COUNT_TOTAL)
+                .build();
+        manager.aggregate(request, activity.getMainExecutor(), new android.os.OutcomeReceiver<android.health.connect.AggregateRecordsResponse, android.health.connect.HealthConnectException>() {
+            @Override public void onResult(android.health.connect.AggregateRecordsResponse response) {
+                Long value = response.get(StepsRecord.STEPS_COUNT_TOTAL);
+                total[0] = value == null ? 0 : value;
+                latch.countDown();
+            }
+            @Override public void onError(android.health.connect.HealthConnectException e) {
+                error[0] = e;
+                latch.countDown();
+            }
+        });
         if (!latch.await(30, TimeUnit.SECONDS)) throw new IllegalStateException("Steps aggregate timeout");
         if (error[0] != null) throw new Exception(error[0]);
         return total[0];
@@ -259,8 +212,7 @@ public final class HealthConnectBridge {
     private Double readLatestWeight(HealthConnectManager manager, TimeInstantRangeFilter range) throws Exception {
         List<WeightRecord> records = readAllRecords(manager, WeightRecord.class, range);
         if (records.isEmpty()) return null;
-        WeightRecord latest = records.get(records.size() - 1);
-        return latest.getWeight().getInKilograms();
+        return records.get(records.size() - 1).getWeight().getInKilograms();
     }
 
     private JSONObject serializeSleep(SleepSessionRecord record) throws Exception {
@@ -315,7 +267,6 @@ public final class HealthConnectBridge {
             if (point.getVerticalAccuracy() != null) p.put("verticalAccuracyM", point.getVerticalAccuracy().getInMeters());
             points.put(p);
         }
-
         JSONObject result = new JSONObject();
         result.put("points", points);
         result.put("pointCount", locations.size());
@@ -339,40 +290,31 @@ public final class HealthConnectBridge {
         Double previous = null;
         for (ExerciseRoute.Location point : points) {
             if (point.getAltitude() == null) continue;
-            double altitude = point.getAltitude().getInMeters();
-            if (previous != null && altitude > previous) gain += altitude - previous;
-            previous = altitude;
+            double current = point.getAltitude().getInMeters();
+            if (previous != null && current > previous) gain += current - previous;
+            previous = current;
         }
         return Math.round(gain * 10d) / 10d;
     }
 
     private double haversineMeters(double lat1, double lon1, double lat2, double lon2) {
-        final double r = 6371000d;
+        final double radius = 6371000d;
         double p1 = Math.toRadians(lat1);
         double p2 = Math.toRadians(lat2);
         double dp = Math.toRadians(lat2 - lat1);
         double dl = Math.toRadians(lon2 - lon1);
         double a = Math.sin(dp / 2) * Math.sin(dp / 2) + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) * Math.sin(dl / 2);
-        return 2 * r * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return 2 * radius * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 
     private boolean isRunning(ExerciseSessionRecord record) {
-        return record.getExerciseType() == ExerciseSessionType.EXERCISE_SESSION_TYPE_RUNNING ||
-                record.getExerciseType() == ExerciseSessionType.EXERCISE_SESSION_TYPE_RUNNING_TREADMILL;
+        return record.getExerciseType() == ExerciseSessionType.EXERCISE_SESSION_TYPE_RUNNING || record.getExerciseType() == ExerciseSessionType.EXERCISE_SESSION_TYPE_RUNNING_TREADMILL;
     }
 
     private long totalSleepMinutes(List<SleepSessionRecord> records) {
         long total = 0;
-        for (SleepSessionRecord record : records) {
-            total += Math.max(0, Duration.between(record.getStartTime(), record.getEndTime()).toMinutes());
-        }
+        for (SleepSessionRecord record : records) total += Math.max(0, Duration.between(record.getStartTime(), record.getEndTime()).toMinutes());
         return total;
-    }
-
-    private JSONObject latestSleep(List<SleepSessionRecord> records) throws Exception {
-        if (records.isEmpty()) return null;
-        SleepSessionRecord latest = records.get(records.size() - 1);
-        return serializeSleep(latest);
     }
 
     private String stageTypeName(int type) {
@@ -392,15 +334,14 @@ public final class HealthConnectBridge {
         if (type == ExerciseSessionType.EXERCISE_SESSION_TYPE_RUNNING) return "running";
         if (type == ExerciseSessionType.EXERCISE_SESSION_TYPE_RUNNING_TREADMILL) return "running_treadmill";
         if (type == ExerciseSessionType.EXERCISE_SESSION_TYPE_WALKING) return "walking";
-        if (type == ExerciseSessionType.EXERCISE_SESSION_TYPE_CYCLING) return "cycling";
+        if (type == ExerciseSessionType.EXERCISE_SESSION_TYPE_BIKING) return "cycling";
         if (type == ExerciseSessionType.EXERCISE_SESSION_TYPE_STRENGTH_TRAINING) return "strength_training";
         return "exercise_type_" + type;
     }
 
     private String routePermissionStatus() {
         if (Build.VERSION.SDK_INT < 35) return "request_session_route";
-        int granted = activity.checkSelfPermission("android.permission.health.READ_EXERCISE_ROUTES");
-        return granted == android.content.pm.PackageManager.PERMISSION_GRANTED ? "available" : "consent_required";
+        return activity.checkSelfPermission("android.permission.health.READ_EXERCISE_ROUTES") == android.content.pm.PackageManager.PERMISSION_GRANTED ? "available" : "consent_required";
     }
 
     private JSONObject readCachedSummary() {
@@ -413,8 +354,7 @@ public final class HealthConnectBridge {
     }
 
     private void persistAndDispatch(JSONObject result) {
-        activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit().putString(SUMMARY_KEY, result.toString()).apply();
+        activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(SUMMARY_KEY, result.toString()).apply();
         dispatchToWebView("health-connect-sync", result);
     }
 
@@ -424,52 +364,35 @@ public final class HealthConnectBridge {
             result.put("error", code);
             result.put("errorMessage", message == null ? "" : message);
             result.put("errorAt", Instant.now().toString());
-            activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .edit().putString(SUMMARY_KEY, result.toString()).apply();
+            activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(SUMMARY_KEY, result.toString()).apply();
             dispatchToWebView("health-connect-error", result);
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { }
     }
 
     private void dispatchToWebView(String eventName, JSONObject payload) {
         activity.runOnUiThread(() -> {
             try {
-                String escaped = JSONObject.quote(payload.toString());
-                String script = "window.dispatchEvent(new CustomEvent('" + eventName + "',{detail:JSON.parse(" + escaped + ")}));";
-                if (activity instanceof MainActivity) {
-                    ((MainActivity) activity).getBridge().getWebView().evaluateJavascript(script, null);
-                }
-            } catch (Throwable ignored) {
-            }
+                String script = "window.dispatchEvent(new CustomEvent('" + eventName + "',{detail:JSON.parse(" + JSONObject.quote(payload.toString()) + ")}));";
+                if (activity instanceof MainActivity) ((MainActivity) activity).getBridge().getWebView().evaluateJavascript(script, null);
+            } catch (Throwable ignored) { }
         });
     }
 
     private void upsertRouteIntoCache(String sessionId, JSONObject route) {
         try {
             JSONObject summary = readCachedSummary();
-            JSONArray sessions = summary.optJSONArray("exerciseSessions");
-            if (sessions == null) return;
-            for (int i = 0; i < sessions.length(); i++) {
-                JSONObject session = sessions.optJSONObject(i);
-                if (session != null && sessionId != null && sessionId.equals(session.optString("id"))) {
-                    session.put("route", route);
-                    session.put("routeStatus", "available");
-                    break;
-                }
-            }
-            JSONArray running = summary.optJSONArray("runningSessions");
-            if (running != null) {
-                for (int i = 0; i < running.length(); i++) {
-                    JSONObject session = running.optJSONObject(i);
+            for (String key : new String[]{"exerciseSessions", "runningSessions"}) {
+                JSONArray sessions = summary.optJSONArray(key);
+                if (sessions == null) continue;
+                for (int i = 0; i < sessions.length(); i++) {
+                    JSONObject session = sessions.optJSONObject(i);
                     if (session != null && sessionId != null && sessionId.equals(session.optString("id"))) {
                         session.put("route", route);
                         session.put("routeStatus", "available");
-                        break;
                     }
                 }
             }
             persistAndDispatch(summary);
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) { }
     }
 }
