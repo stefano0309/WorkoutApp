@@ -35,6 +35,11 @@ public class MainActivity extends BridgeActivity {
 
     @Override public void onResume() { super.onResume(); installWidgetBridge(); }
 
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (healthBridge != null) healthBridge.handleActivityResult(requestCode, resultCode, data);
+    }
+
     private void installWidgetBridge() {
         final WebView webView = getBridge().getWebView();
         if (webView == null) { HANDLER.postDelayed(this::installWidgetBridge, 500); return; }
