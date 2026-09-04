@@ -46,8 +46,8 @@
   const loadAuth = async () => {
     if (authApi) return authApi;
     const [{ getApps }, authModule] = await Promise.all([
-      import('https://www.gstatic.com/firebase/12.18.0/firebase-app.js'),
-      import('https://www.gstatic.com/firebase/12.18.0/firebase-auth.js'),
+      import('./firebase-runtime.bundle.js'),
+      import('./firebase-runtime.bundle.js'),
     ]);
     const { getAuth, GoogleAuthProvider, signInWithCredential, signOut } = authModule;
     const apps = getApps();
