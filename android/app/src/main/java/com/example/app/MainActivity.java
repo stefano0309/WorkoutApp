@@ -69,22 +69,18 @@ public class MainActivity extends BridgeActivity {
             if (alreadyPrompted) return;
 
             try {
-                int status = healthBridgeStatus();
+                int status = androidx.health.connect.client.HealthConnectClient.getSdkStatus(
+                        this,
+                        "com.google.android.apps.healthdata");
                 if (status == androidx.health.connect.client.HealthConnectClient.SDK_AVAILABLE) {
                     getSharedPreferences(HC_PROMPT_PREFS, MODE_PRIVATE)
                             .edit().putBoolean(HC_PROMPTED_KEY, true).apply();
                     healthBridge.requestHealthPermissions();
                 }
             } catch (Throwable ignored) {
-                // The in-app Health Connect controls remain available even when auto-prompt is unavailable.
+                // The in-app Health Connect controls remain available if auto-prompt is unavailable.
             }
         }, 1200L);
-    }
-
-    private int healthBridgeStatus() {
-        return androidx.health.connect.client.HealthConnectClient.getSdkStatus(
-                this,
-                "com.google.android.apps.healthdata");
     }
 
     private void installWidgetBridge() {
@@ -107,7 +103,7 @@ public class MainActivity extends BridgeActivity {
     private void bootstrapNativeScripts(final WebView webView) {
         String script = "javascript:(function(){" +
                 "window.__htsNativeScriptErrors=window.__htsNativeScriptErrors||[];" +
-                "var files=['workout-ux.js','roadmap-features.js','health-connect.service.js','health-connect-ui.js','ui-consistency.js','offline-sync.js','native-auth.js'];" +
+                "var files=['native-auth.js','workout-ux.js','roadmap-features.js','health-connect.service.js','health-connect-ui.js','ui-consistency.js','offline-sync.js'];" +
                 "files.forEach(function(src){" +
                 "if(document.querySelector('script[data-hts-src=\\\"'+src+'\\\"]'))return;" +
                 "var s=document.createElement('script');s.src=src;s.async=false;s.setAttribute('data-hts-src',src);" +
