@@ -113,7 +113,7 @@ public class MainActivity extends BridgeActivity {
     private void bootstrapNativeScripts(final WebView webView) {
         String script = "javascript:(function(){" +
                 "window.__htsNativeScriptErrors=window.__htsNativeScriptErrors||[];" +
-                "var files=['native-auth.js','workout-ux.js','roadmap-features.js','health-connect.service.js','health-connect-ui.js','health-dashboard.js','ui-consistency.js','offline-sync.js'];" +
+                "var files=['native-auth.js','workout-ux.js','roadmap-features.js','health-connect.service.js','health-connect-ui.js','health-dashboard.js','ui-shell-refactor.js','ui-consistency.js','offline-sync.js'];" +
                 "files.forEach(function(src){" +
                 "if(document.querySelector('script[data-hts-src=\\\"'+src+'\\\"]'))return;" +
                 "var s=document.createElement('script');s.src=src;s.async=false;s.setAttribute('data-hts-src',src);" +
