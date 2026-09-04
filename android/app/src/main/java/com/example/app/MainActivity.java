@@ -27,7 +27,11 @@ public class MainActivity extends BridgeActivity {
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        healthBridge = new HealthConnectBridge(this);
+        // Health Connect framework classes are available from Android 14 (API 34).
+        // Keep the bridge uninstantiated on older devices so API 34 classes are not resolved at runtime.
+        if (Build.VERSION.SDK_INT >= 34) {
+            healthBridge = new HealthConnectBridge(this);
+        }
         installWidgetBridge();
         WeeklyPhotoReceiver.schedule(this);
         NotificationHelper.ensureChannels(this);
@@ -45,8 +49,9 @@ public class MainActivity extends BridgeActivity {
         if (webView == null) { HANDLER.postDelayed(this::installWidgetBridge, 500); return; }
         webView.getSettings().setJavaScriptEnabled(true);
         webView.addJavascriptInterface(widgetBridge, "AndroidWidgetBridge");
-        if (healthBridge == null) healthBridge = new HealthConnectBridge(this);
-        webView.addJavascriptInterface(healthBridge, "AndroidHealthBridge");
+        if (healthBridge != null) {
+            webView.addJavascriptInterface(healthBridge, "AndroidHealthBridge");
+        }
         injectWidgetSyncScript(webView, 300);
         injectWidgetSyncScript(webView, 1000);
         injectWidgetSyncScript(webView, 2500);
