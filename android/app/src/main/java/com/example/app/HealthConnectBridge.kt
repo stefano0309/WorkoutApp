@@ -1,7 +1,6 @@
 package com.example.app
 
 import android.app.Activity
-import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.webkit.JavascriptInterface
@@ -39,19 +38,15 @@ internal object HealthConnectCacheLock
 
 class HealthConnectBridge(private val activity: Activity) {
     companion object {
-        private const val PREFS = "health_connect_cache"
-        private const val SUMMARY_KEY = "summary"
-        private const val ROUTES_KEY = "routes"
-        private const val ERROR_KEY = "last_error"
         private const val PERMISSION_REQUEST = 7401
         private const val ROUTE_REQUEST = 7402
         private const val MAX_LOOKBACK_DAYS = 365
         private const val PAGE_SIZE = 5000
-        private const val MAX_CACHED_ROUTES = 50
         private const val PROVIDER = "com.google.android.apps.healthdata"
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val cacheStore = HealthConnectCacheStore(activity)
     @Volatile private var pendingRouteSessionId: String? = null
     @Volatile private var destroyed = false
 
@@ -88,7 +83,7 @@ class HealthConnectBridge(private val activity: Activity) {
 
     @JavascriptInterface
     fun readHealthSummary(): String? = synchronized(HealthConnectCacheLock) {
-        activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(SUMMARY_KEY, null)
+        cacheStore.readSummary().toString().takeIf { it != "{}" }
     }
 
     @JavascriptInterface
@@ -386,44 +381,29 @@ class HealthConnectBridge(private val activity: Activity) {
     }
 
     private fun cachedSummary(): JSONObject = synchronized(HealthConnectCacheLock) {
-        val raw = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(SUMMARY_KEY, null)
-        runCatching { if (raw.isNullOrBlank()) JSONObject() else JSONObject(raw) }.getOrDefault(JSONObject())
+        cacheStore.readSummary()
     }
 
     private fun cacheRoute(id: String, route: JSONObject) = synchronized(HealthConnectCacheLock) {
-        runCatching {
-            val prefs = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            val raw = prefs.getString(ROUTES_KEY, null)
-            val routes = if (raw.isNullOrBlank()) JSONObject() else JSONObject(raw)
-            routes.put(id, route)
-            while (routes.length() > MAX_CACHED_ROUTES) {
-                val oldest = routes.keys().asSequence().firstOrNull() ?: break
-                routes.remove(oldest)
-            }
-            prefs.edit().putString(ROUTES_KEY, routes.toString()).apply()
-        }.onFailure { saveError("route_cache_failed", it.toString()) }
+        runCatching { cacheStore.saveRoute(id, route) }
+            .onFailure { saveError("route_cache_failed", it.toString()) }
     }
 
     @JavascriptInterface
     fun readExerciseRoute(sessionId: String?): String? = synchronized(HealthConnectCacheLock) {
         if (sessionId.isNullOrBlank()) return@synchronized null
-        runCatching {
-            val raw = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(ROUTES_KEY, null) ?: return@synchronized null
-            JSONObject(raw).optJSONObject(sessionId)?.toString()
-        }.getOrNull()
+        cacheStore.readRoute(sessionId)
     }
 
     @JavascriptInterface
     fun readLastError(): String? = synchronized(HealthConnectCacheLock) {
-        activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(ERROR_KEY, null)
+        cacheStore.readError()
     }
 
     private fun persistAndDispatch(result: JSONObject) = synchronized(HealthConnectCacheLock) {
         if (destroyed) return@synchronized
-        activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(SUMMARY_KEY, result.toString())
-            .remove(ERROR_KEY)
-            .apply()
+        cacheStore.saveSummary(result)
+        cacheStore.clearError()
         dispatchToWebView("health-connect-sync", result)
     }
 
@@ -432,9 +412,7 @@ class HealthConnectBridge(private val activity: Activity) {
             JSONObject().put("code", code).put("message", message).put("timestamp", Instant.now().toString())
         }.getOrDefault(JSONObject())
         synchronized(HealthConnectCacheLock) {
-            activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                .putString(ERROR_KEY, error.toString())
-                .apply()
+            cacheStore.saveError(code, message)
         }
         dispatchToWebView("health-connect-error", error)
     }
