@@ -105,14 +105,25 @@ public class MainActivity extends BridgeActivity {
             }
             installedWebView = webView;
             widgetBridgeInstalled = true;
-            bootstrapNativeScripts(webView);
         }
+
+        // The WebView can still be loading index.html when onCreate()/onResume()
+        // runs. Bootstrap the JS modules several times after short delays so a
+        // load-time race cannot leave HealthDashboard/Salute missing. Each
+        // bootstrap is idempotent because the injected scripts are tagged and
+        // skipped when already present.
+        webView.postDelayed(() -> bootstrapNativeScripts(webView), 250L);
+        webView.postDelayed(() -> bootstrapNativeScripts(webView), 1000L);
+        webView.postDelayed(() -> bootstrapNativeScripts(webView), 2500L);
+        webView.postDelayed(() -> bootstrapNativeScripts(webView), 5000L);
+
         syncWidgetState(webView);
     }
 
     private void bootstrapNativeScripts(final WebView webView) {
         String script = "javascript:(function(){" +
                 "window.__htsNativeScriptErrors=window.__htsNativeScriptErrors||[];" +
+                "function ensure(){" +
                 "var files=['native-auth.js','workout-ux.js','roadmap-features.js','health-connect.service.js','health-connect-ui.js','health-dashboard.js','ui-shell-refactor.js','ui-consistency.js','offline-sync.js'];" +
                 "files.forEach(function(src){" +
                 "if(document.querySelector('script[data-hts-src=\\\"'+src+'\\\"]'))return;" +
@@ -121,6 +132,8 @@ public class MainActivity extends BridgeActivity {
                 "s.onerror=function(){if(window.__htsNativeScriptErrors.indexOf(src)<0)window.__htsNativeScriptErrors.push(src);};" +
                 "document.head.appendChild(s);" +
                 "});" +
+                "}" +
+                "if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',ensure,{once:true});else ensure();" +
                 "})();";
         webView.evaluateJavascript(script, null);
     }
