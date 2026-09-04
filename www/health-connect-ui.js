@@ -1,7 +1,7 @@
 (() => {
   'use strict';
-  if (window.__HTS_HEALTH_UI_V3__) return;
-  window.__HTS_HEALTH_UI_V3__ = true;
+  if (window.__HTS_HEALTH_UI_V4__) return;
+  window.__HTS_HEALTH_UI_V4__ = true;
 
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const readSummary = () => {
@@ -38,6 +38,32 @@
     document.getElementById('hts-hc-sync')?.addEventListener('click', () => syncAndRefresh(30));
   }
 
+  function renderPermissionStatus(caps) {
+    const statusEl = document.getElementById('hts-hc-status');
+    if (!statusEl || !caps) return;
+    if (!caps.available) {
+      if (caps.status === 2) statusEl.textContent = 'Health Connect richiede installazione o aggiornamento.';
+      else statusEl.textContent = 'Health Connect non disponibile su questo dispositivo.';
+      return;
+    }
+    const labels = [
+      ['Passi', caps.readSteps],
+      ['Peso', caps.readWeight],
+      ['Sonno', caps.readSleep],
+      ['Allenamenti', caps.readExercise],
+      ['Frequenza cardiaca', caps.readHeartRate],
+    ];
+    const granted = labels.filter(([, ok]) => ok).map(([label]) => label);
+    const missing = labels.filter(([, ok]) => !ok).map(([label]) => label);
+    if (!missing.length) {
+      statusEl.innerHTML = 'Health Connect disponibile · <strong>tutti i permessi di lettura attivi</strong>';
+    } else if (granted.length) {
+      statusEl.innerHTML = `Health Connect disponibile · <strong>${esc(granted.length)}/${esc(labels.length)} permessi attivi</strong><br><small>Mancano: ${esc(missing.join(', '))}</small>`;
+    } else {
+      statusEl.innerHTML = 'Health Connect disponibile · <strong>nessun permesso di lettura attivo</strong>';
+    }
+  }
+
   function refreshPanel() {
     ensureHealthPanel();
     const statusEl = document.getElementById('hts-hc-status');
@@ -49,10 +75,15 @@
         statusEl.textContent = 'Integrazione Health Connect non disponibile.';
         return;
       }
-      if (caps.available) statusEl.innerHTML = 'Health Connect disponibile · <strong>dati gestibili dall’app</strong>';
-      else if (caps.status === 2) statusEl.textContent = 'Health Connect richiede installazione o aggiornamento.';
-      else statusEl.textContent = 'Health Connect non disponibile su questo dispositivo.';
-    } catch (_) { statusEl.textContent = 'Impossibile verificare Health Connect.'; }
+      if (caps.permissionsState === 'unknown' && caps.available) {
+        statusEl.textContent = 'Verifico i permessi Health Connect…';
+        window.AndroidHealthBridge?.refreshHealthCapabilities?.();
+        return;
+      }
+      renderPermissionStatus(caps);
+    } catch (_) {
+      statusEl.textContent = 'Impossibile verificare Health Connect.';
+    }
   }
 
   function syncAndRefresh(days) {
@@ -97,7 +128,6 @@
     const s = summary || {};
     const sleeps = Array.isArray(s.sleepSessions) ? s.sleepSessions : [];
     const exercises = Array.isArray(s.exerciseSessions) ? s.exerciseSessions : [];
-    const runs = Array.isArray(s.runningSessions) ? s.runningSessions : [];
     const routes = getRoutes(s);
     const sleepMinutes = n(s.sleepMinutes);
     const avgSleep = sleeps.length ? Math.round(sleepMinutes / sleeps.length) : 0;
@@ -120,86 +150,55 @@
           <button type="button" class="btn btn-info btn-sm" id="hts-hc-open-permissions"><i class="bi bi-shield-lock me-1"></i>Gestisci accesso</button>
         </div>
       </div>
-      <div class="row g-3 mt-1">
-        ${metricCard('bi-footprints', 'Passi', s.steps != null ? Math.round(n(s.steps)).toLocaleString('it-IT') : '—', 'periodo sincronizzato')}
-        ${metricCard('bi-speedometer2', 'Peso', s.weightKg != null ? `${n(s.weightKg).toFixed(1)} kg` : '—', 'ultima misurazione')}
-        ${metricCard('bi-moon-stars-fill', 'Sonno', sleepMinutes ? fmtHours(sleepMinutes) : '—', sleeps.length ? `${sleeps.length} sessioni · media ${fmtHours(avgSleep)}` : 'nessuna sessione')}
-        ${metricCard('bi-heart-pulse-fill', 'Frequenza cardiaca', hrAvg ? `${hrAvg} bpm` : '—', hrValues.length ? `${hrMin}–${hrMax} bpm · ${hrValues.length} campioni` : 'dati HR non importati')}
+      <div class="row g-3 mb-3">
+        ${metricCard('bi-person-walking','Passi', n(s.steps).toLocaleString('it-IT'), `${s.lookbackDays || '—'} giorni`)}
+        ${metricCard('bi-speedometer2','Peso', s.weightKg != null ? `${n(s.weightKg).toFixed(1)} kg` : '—', s.weightKg != null ? `Aggiornato ${fmtDate(s.importedAt)}` : '')}
+        ${metricCard('bi-moon-stars','Sonno', fmtHours(sleepMinutes), `${s.sleepCount || 0} sessioni · media ${fmtHours(avgSleep)}`)}
+        ${metricCard('bi-heart-pulse','Frequenza', hrAvg ? `${hrAvg} bpm` : '—', hrValues.length ? `${hrMin}–${hrMax} bpm · ${s.heartRateSampleCount || hrValues.length} campioni` : 'Nessun campione')}
       </div>
-      <div class="row g-3 mt-1">
-        <div class="col-xl-7"><div class="hts-hc-card h-100"><div class="d-flex justify-content-between align-items-center mb-3"><div><h5 class="mb-1">Allenamenti</h5><div class="hts-hc-muted">Sessioni rilevate da Health Connect</div></div><span class="badge bg-dark border">${exercises.length}</span></div><div class="hts-hc-table">${listRows(exercises.slice(-10).reverse(), r => `<div class="hts-hc-row"><div><strong>${esc(r.title || r.exerciseTypeName || 'Allenamento')}</strong><div class="hts-hc-muted">${fmtDateTime(r.start)}</div></div><div class="text-end"><strong>${Math.round(n(r.durationMinutes))} min</strong><div class="hts-hc-muted">${r.routeStatus === 'available' ? 'GPS disponibile' : r.routeStatus === 'consent_required' ? 'GPS da condividere' : 'Nessun GPS'}</div></div></div>`, 'Nessun allenamento importato.')}</div></div></div>
-        <div class="col-xl-5"><div class="hts-hc-card h-100"><div class="d-flex justify-content-between align-items-center mb-3"><div><h5 class="mb-1">Sonno</h5><div class="hts-hc-muted">Ultime sessioni e fasi</div></div><span class="badge bg-dark border">${sleeps.length}</span></div><div class="hts-hc-table">${listRows(sleeps.slice(-8).reverse(), x => `<div class="hts-hc-row"><div><strong>${fmtDate(x.start)}</strong><div class="hts-hc-muted">${new Date(x.start).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'})} → ${new Date(x.end).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'})}</div></div><div class="text-end"><strong>${fmtHours(x.durationMinutes)}</strong><div class="hts-hc-muted">${Array.isArray(x.stages) ? x.stages.length : 0} fasi</div></div></div>`, 'Nessun sonno importato.')}</div></div></div>
-      </div>
-      <div class="row g-3 mt-1">
-        <div class="col-xl-6"><div class="hts-hc-card h-100"><div class="d-flex justify-content-between align-items-center mb-3"><div><h5 class="mb-1">Corse</h5><div class="hts-hc-muted">Dati attività e stato GPS</div></div><span class="badge bg-dark border">${runs.length}</span></div>${listRows(runs.slice(-8).reverse(), r => `<div class="hts-hc-row"><div><strong>${esc(r.title || r.exerciseTypeName || 'Corsa')}</strong><div class="hts-hc-muted">${fmtDateTime(r.start)} · ${Math.round(n(r.durationMinutes))} min</div></div><div class="text-end">${r.route ? `<span class="badge bg-success">${routeDistance(r.route)} km</span>` : r.hasRoute ? `<button class="btn btn-sm btn-outline-info" data-route="${esc(r.id)}">Condividi GPS</button>` : '<span class="badge bg-secondary">Senza GPS</span>'}</div></div>`, 'Nessuna corsa importata.')}</div></div>
-        <div class="col-xl-6"><div class="hts-hc-card h-100"><div class="d-flex justify-content-between align-items-center mb-3"><div><h5 class="mb-1">Percorsi GPS</h5><div class="hts-hc-muted">Route consentite e analizzate</div></div><span class="badge bg-dark border">${routes.length}</span></div><div class="row g-2 mb-3"><div class="col-6"><div class="hts-hc-mini"><strong>${totalRouteKm.toFixed(2)} km</strong><span>Distanza totale</span></div></div><div class="col-6"><div class="hts-hc-mini"><strong>${Math.round(totalElevation)} m</strong><span>Dislivello positivo</span></div></div></div>${listRows(routes.slice(-6).reverse(), r => `<div class="hts-hc-row"><div><strong>${fmtDateTime(r.start || r.importedAt)}</strong><div class="hts-hc-muted">${r.route?.pointCount || 0} punti GPS</div></div><div class="text-end"><strong>${routeDistance(r.route)} km</strong><div class="hts-hc-muted">+${Math.round(n(r.route?.elevationGainM))} m</div></div></div>`, 'Nessun percorso GPS condiviso.')}</div></div>
-      </div>
-      <div class="hts-hc-card mt-3"><div class="d-flex justify-content-between align-items-center mb-3"><div><h5 class="mb-1">Fasi del sonno</h5><div class="hts-hc-muted">Dettaglio dell'ultima sessione disponibile</div></div></div>${renderSleepStages(sleeps[sleeps.length - 1])}</div>
-      <div class="hts-hc-card mt-3"><div class="d-flex justify-content-between align-items-center mb-3"><div><h5 class="mb-1">Informazioni sincronizzazione</h5><div class="hts-hc-muted">Origine e intervallo dei dati importati</div></div></div><div class="row g-3 small"><div class="col-md-3"><span class="hts-hc-muted d-block">Sorgente</span><strong>${esc(s.source || 'Health Connect')}</strong></div><div class="col-md-3"><span class="hts-hc-muted d-block">Periodo</span><strong>${n(s.lookbackDays)} giorni</strong></div><div class="col-md-3"><span class="hts-hc-muted d-block">Inizio</span><strong>${fmtDate(s.start)}</strong></div><div class="col-md-3"><span class="hts-hc-muted d-block">Fine</span><strong>${fmtDate(s.end)}</strong></div></div></div>`;
+      <div class="row g-3">
+        <div class="col-12 col-xl-6"><div class="hts-hc-section"><div class="hts-hc-section-title"><i class="bi bi-moon-stars me-2"></i>Sonno</div>${listRows(sleeps.slice(-6).reverse(), x => `<div class="hts-hc-list-row"><div><strong>${fmtDate(x.start)}</strong><small>${fmtDateTime(x.start)} → ${fmtDateTime(x.end)}</small></div><span>${fmtHours(x.durationMinutes)}</span></div>${renderSleepStages(x)}`, 'Nessuna sessione del sonno disponibile.')}</div></div>
+        <div class="col-12 col-xl-6"><div class="hts-hc-section"><div class="hts-hc-section-title"><i class="bi bi-activity me-2"></i>Allenamenti</div>${listRows(exercises.slice(-8).reverse(), x => `<div class="hts-hc-list-row"><div><strong>${esc(x.title || x.exerciseTypeName || 'Allenamento')}</strong><small>${fmtDateTime(x.start)} → ${fmtDateTime(x.end)}</small></div><span>${fmtHours(x.durationMinutes)}</span></div>`, 'Nessun allenamento disponibile.')}</div></div>
+        <div class="col-12"><div class="hts-hc-section"><div class="hts-hc-section-title"><i class="bi bi-geo-alt me-2"></i>Percorsi GPS</div><div class="hts-hc-muted mb-2">${routes.length} percorsi · ${totalRouteKm.toFixed(2)} km · ${Math.round(totalElevation)} m di dislivello positivo</div>${listRows(routes.slice(-6).reverse(), x => `<div class="hts-hc-list-row"><div><strong>${esc(x.title || x.exerciseTypeName || 'Corsa')}</strong><small>${fmtDateTime(x.start)}</small></div><span>${routeDistance(x.route)} km</span></div>`, 'Nessun percorso GPS importato.')}</div></div>
+      </div>`;
 
-    root.querySelectorAll('[data-hc-days]').forEach(btn => btn.addEventListener('click', () => syncAndRefresh(Number(btn.dataset.hcDays))));
-    root.querySelector('#hts-hc-open-permissions')?.addEventListener('click', () => window.HealthConnectService?.requestPermissions?.());
-    root.querySelectorAll('[data-route]').forEach(btn => btn.addEventListener('click', () => {
-      const ok = window.HealthConnectService?.requestRoute?.(btn.dataset.route);
-      if (ok) { btn.disabled = true; btn.textContent = 'Apro Condivisione…'; }
-    }));
+    root.querySelectorAll('[data-hc-days]').forEach(button => button.addEventListener('click', () => syncAndRefresh(Number(button.dataset.hcDays))));
+    document.getElementById('hts-hc-open-permissions')?.addEventListener('click', () => window.HealthConnectService?.requestPermissions?.());
   }
 
-  function ensureModal() {
+  function ensureDashboard() {
     if (document.getElementById('hts-health-modal')) return;
     const modal = document.createElement('div');
     modal.id = 'hts-health-modal';
     modal.className = 'hts-hc-modal';
-    modal.innerHTML = `<div class="hts-hc-backdrop" data-close-hc></div><div class="hts-hc-dialog"><div class="hts-hc-dialog-head"><div><div class="text-uppercase small text-info fw-bold">Google Health</div><h3 class="mb-0">Health Connect Dashboard</h3></div><button type="button" class="btn btn-outline-light btn-sm" data-close-hc><i class="bi bi-x-lg"></i></button></div><div id="hts-health-dashboard" class="hts-hc-dialog-body"></div></div>`;
+    modal.innerHTML = `<div class="hts-hc-modal-inner"><div id="hts-health-dashboard"></div><button type="button" class="btn btn-outline-light btn-sm hts-hc-close">Chiudi</button></div>`;
     document.body.appendChild(modal);
-    modal.querySelectorAll('[data-close-hc]').forEach(el => el.addEventListener('click', closeDashboard));
+    modal.querySelector('.hts-hc-close')?.addEventListener('click', () => modal.classList.remove('open'));
   }
 
   function openDashboard() {
-    ensureModal();
+    ensureDashboard();
     document.getElementById('hts-health-modal')?.classList.add('open');
     renderDashboard(readSummary());
-    document.body.classList.add('hts-hc-modal-open');
   }
 
-  function closeDashboard() {
-    document.getElementById('hts-health-modal')?.classList.remove('open');
-    document.body.classList.remove('hts-hc-modal-open');
-  }
-
-  function injectStyle() {
-    if (document.getElementById('hts-health-connect-style')) return;
-    const style = document.createElement('style');
-    style.id = 'hts-health-connect-style';
-    style.textContent = `
-      .hts-health-row{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid #2c3753}.hts-health-row:last-child{border-bottom:0}
-      #hts-health-connect-panel{position:fixed;left:16px;right:16px;bottom:84px;z-index:1029;pointer-events:none}
-      .hts-hc-panel-card{pointer-events:auto;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 14px;border:1px solid #2c3753;border-radius:16px;background:rgba(18,26,45,.97);box-shadow:0 12px 35px rgba(0,0,0,.35);backdrop-filter:blur(12px)}
-      .hts-hc-title{font-weight:800;color:#eef3ff}.hts-hc-status{font-size:.78rem;color:#9fb0d0;margin-top:2px}.hts-hc-actions{display:flex;gap:8px;flex-shrink:0}
-      .hts-hc-modal{position:fixed;inset:0;z-index:2000;display:none}.hts-hc-modal.open{display:block}.hts-hc-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(5px)}
-      .hts-hc-dialog{position:relative;width:min(1200px,calc(100% - 24px));height:min(92vh,1000px);margin:4vh auto;background:#0b1020;border:1px solid #2c3753;border-radius:22px;box-shadow:0 25px 80px rgba(0,0,0,.6);overflow:hidden;display:flex;flex-direction:column}
-      .hts-hc-dialog-head{display:flex;align-items:center;justify-content:space-between;padding:18px 20px;border-bottom:1px solid #2c3753;background:#10182c;flex-shrink:0}.hts-hc-dialog-body{padding:20px;overflow:auto}
-      .hts-hc-card{background:linear-gradient(180deg,rgba(22,31,51,.96),rgba(15,22,40,.96));border:1px solid #2c3753;border-radius:16px;padding:16px}.hts-hc-muted{color:#9fb0d0;font-size:.82rem}.hts-hc-empty{color:#9fb0d0;padding:16px 0;text-align:center}.hts-hc-row{display:flex;justify-content:space-between;gap:14px;padding:10px 0;border-bottom:1px solid rgba(44,55,83,.7)}.hts-hc-row:last-child{border-bottom:0}
-      .hts-hc-metric{height:100%;background:linear-gradient(180deg,rgba(22,31,51,.96),rgba(15,22,40,.96));border:1px solid #2c3753;border-radius:16px;padding:14px}.hts-hc-icon{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:rgba(98,212,255,.12);color:#62d4ff}.hts-hc-label{font-size:.72rem;color:#9fb0d0;text-transform:uppercase;letter-spacing:.04em}.hts-hc-value{font-size:1.55rem;font-weight:900;margin-top:12px}.hts-hc-sub{font-size:.75rem;color:#9fb0d0;margin-top:2px}.hts-hc-mini{background:rgba(255,255,255,.03);border:1px solid #2c3753;border-radius:12px;padding:10px}.hts-hc-mini strong{display:block;font-size:1.1rem}.hts-hc-mini span{display:block;color:#9fb0d0;font-size:.72rem}
-      .hts-hc-stage-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}.hts-hc-stage{border:1px solid #2c3753;border-radius:12px;padding:10px;background:rgba(255,255,255,.03)}.hts-hc-stage strong,.hts-hc-stage span,.hts-hc-stage small{display:block}.hts-hc-stage span{font-weight:800;margin-top:4px}.hts-hc-stage small{color:#9fb0d0;margin-top:3px}
-      body.hts-hc-modal-open{overflow:hidden}
-      @media(max-width:768px){#hts-health-connect-panel{bottom:76px;left:8px;right:8px}.hts-hc-panel-card{align-items:flex-start;flex-direction:column}.hts-hc-actions{width:100%;flex-wrap:wrap}.hts-hc-actions button{flex:1;min-width:110px}.hts-hc-dialog{width:calc(100% - 10px);height:96vh;margin:2vh auto;border-radius:16px}.hts-hc-dialog-head{padding:14px}.hts-hc-dialog-body{padding:12px}}
-    `;
-    document.head.appendChild(style);
-  }
-
-  function refresh() {
+  window.addEventListener('health-connect-capabilities', (event) => {
+    ensureHealthPanel();
+    renderPermissionStatus(event.detail || {});
+  });
+  window.addEventListener('health-connect-permission-state', (event) => {
+    ensureHealthPanel();
+    renderPermissionStatus(event.detail || {});
+  });
+  window.addEventListener('health-connect-permissions', () => {
+    window.AndroidHealthBridge?.refreshHealthCapabilities?.();
     refreshPanel();
-    const summary = readSummary();
-    if (summary && document.getElementById('hts-health-modal')?.classList.contains('open')) renderDashboard(summary);
-  }
+  });
+  window.addEventListener('health-connect-error', (event) => {
+    if (event.detail?.code === 'permission_denied') refreshPanel();
+  });
 
-  window.HealthConnectDashboard = { open: openDashboard, close: closeDashboard, refresh };
-  window.addEventListener('health-connect-sync', refresh);
-  window.addEventListener('health-connect-permissions', refreshPanel);
-  window.addEventListener('health-connect-error', refreshPanel);
-  window.addEventListener('health-connect-route', refresh);
-  window.addEventListener('health-connect-state-updated', refresh);
-  injectStyle();
-  setTimeout(() => { ensureHealthPanel(); refresh(); }, 500);
+  window.HealthConnectUI = { refreshPanel, openDashboard, syncAndRefresh };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', refreshPanel, { once: true });
+  else refreshPanel();
 })();
