@@ -5,14 +5,22 @@
 
   const STATE_KEY = 'hybridTrainingSystem';
   const SYNC_TIMEOUT_MS = 30_000;
+  const ensureStorage = () => {
+    if (window.HTSStorage) return Promise.resolve(window.HTSStorage);
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'storage-repository.js';
+      script.async = false;
+      script.dataset.htsStorageRepository = 'true';
+      script.addEventListener('load', () => window.HTSStorage ? resolve(window.HTSStorage) : reject(new Error('storage-repository-unavailable')), { once: true });
+      script.addEventListener('error', () => reject(new Error('storage-repository-load-failed')), { once: true });
+      document.head.appendChild(script);
+    });
+  };
   const readState = () => window.HTSStorage?.readObject(STATE_KEY, {}) || {};
   const writeState = (state) => {
-    try {
-      state.lastSavedAt = new Date().toISOString();
-      window.HTSStorage?.write(STATE_KEY, state);
-    } catch (_) {}
+    try { state.lastSavedAt = new Date().toISOString(); window.HTSStorage?.write(STATE_KEY, state); } catch (_) {}
   };
-
   const normalizeState = (state) => {
     state.health = state.health || {};
     state.log = Array.isArray(state.log) ? state.log : [];
@@ -20,7 +28,7 @@
     return state;
   };
   const mergeSummary = (summary) => {
-    if (!summary || typeof summary !== 'object') return;
+    if (!summary || typeof summary !== 'object' || !window.HTSStorage) return;
     const state = normalizeState(readState());
     state.health = { ...state.health, ...summary, syncedAt: new Date().toISOString(), importedFromHealthConnect: true };
     if (Number.isFinite(Number(summary.weightKg)) && Number(summary.weightKg) > 0) {
@@ -43,15 +51,8 @@
     window.dispatchEvent(new CustomEvent('health-connect-state-updated', { detail: summary }));
   };
   const readNativeSummary = () => {
-    try {
-      const raw = window.AndroidHealthBridge?.readHealthSummary?.();
-      if (!raw) return null;
-      const summary = JSON.parse(raw);
-      mergeSummary(summary);
-      return summary;
-    } catch (_) { return null; }
+    try { const raw = window.AndroidHealthBridge?.readHealthSummary?.(); if (!raw) return null; const summary = JSON.parse(raw); mergeSummary(summary); return summary; } catch (_) { return null; }
   };
-
   let activeSyncPromise = null;
   const sync = (days = 30) => {
     if (activeSyncPromise) return activeSyncPromise;
@@ -60,50 +61,29 @@
       const hasHealthBridge = Boolean(window.AndroidHealthBridge);
       const hasHeartRateBridge = Boolean(window.AndroidHeartRateBridge);
       if (!hasHealthBridge && !hasHeartRateBridge) { activeSyncPromise = null; resolve({ requested: false, healthConnect: false, heartRate: false }); return; }
-      let healthDone = !hasHealthBridge;
-      let heartRateDone = !hasHeartRateBridge;
-      let settled = false;
-      let finish;
+      let healthDone = !hasHealthBridge, heartRateDone = !hasHeartRateBridge, settled = false, finish;
       const timer = setTimeout(() => finish(new Error('health-connect-sync-timeout')), SYNC_TIMEOUT_MS);
-      const cleanup = () => {
-        clearTimeout(timer);
-        window.removeEventListener('health-connect-sync', onHealthSync);
-        window.removeEventListener('health-connect-heart-rate', onHeartRateSync);
-        window.removeEventListener('health-connect-error', onError);
-        activeSyncPromise = null;
-      };
-      finish = (error) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        if (error) reject(error); else resolve({ requested: true, healthConnect: hasHealthBridge, heartRate: hasHeartRateBridge });
-      };
+      const cleanup = () => { clearTimeout(timer); window.removeEventListener('health-connect-sync', onHealthSync); window.removeEventListener('health-connect-heart-rate', onHeartRateSync); window.removeEventListener('health-connect-error', onError); activeSyncPromise = null; };
+      finish = (error) => { if (settled) return; settled = true; cleanup(); if (error) reject(error); else resolve({ requested: true, healthConnect: hasHealthBridge, heartRate: hasHeartRateBridge }); };
       const checkDone = () => { if (healthDone && heartRateDone) finish(); };
       const onHealthSync = (event) => { mergeSummary(event.detail); healthDone = true; checkDone(); };
       const onHeartRateSync = (event) => { mergeSummary(event.detail); heartRateDone = true; checkDone(); };
-      const onError = (event) => { const code = event.detail?.code || event.detail?.message || 'health-connect-sync-failed'; finish(new Error(String(code))); };
-      window.addEventListener('health-connect-sync', onHealthSync);
-      window.addEventListener('health-connect-heart-rate', onHeartRateSync);
-      window.addEventListener('health-connect-error', onError);
-      try {
-        if (hasHealthBridge) window.AndroidHealthBridge.syncHealthConnectDays(rangeDays);
-        if (hasHeartRateBridge) window.AndroidHeartRateBridge.syncHeartRate(rangeDays);
-      } catch (error) { finish(error); }
+      const onError = (event) => finish(new Error(String(event.detail?.code || event.detail?.message || 'health-connect-sync-failed')));
+      window.addEventListener('health-connect-sync', onHealthSync); window.addEventListener('health-connect-heart-rate', onHeartRateSync); window.addEventListener('health-connect-error', onError);
+      try { if (hasHealthBridge) window.AndroidHealthBridge.syncHealthConnectDays(rangeDays); if (hasHeartRateBridge) window.AndroidHeartRateBridge.syncHeartRate(rangeDays); } catch (error) { finish(error); }
       checkDone();
     });
     return activeSyncPromise;
   };
   const requestPermissions = () => { try { window.AndroidHealthBridge?.requestHealthPermissions?.(); } catch (_) {} };
-  const requestRoute = (sessionId) => {
-    try { if (sessionId && window.AndroidHealthBridge) { window.AndroidHealthBridge.requestExerciseRoute(String(sessionId)); return true; } } catch (_) {}
-    return false;
-  };
+  const requestRoute = (sessionId) => { try { if (sessionId && window.AndroidHealthBridge) { window.AndroidHealthBridge.requestExerciseRoute(String(sessionId)); return true; } } catch (_) {} return false; };
 
   window.HealthConnectService = { read: readNativeSummary, sync, requestPermissions, requestRoute, mergeSummary };
   window.addEventListener('health-connect-sync', (event) => mergeSummary(event.detail));
   window.addEventListener('health-connect-heart-rate', (event) => mergeSummary(event.detail));
   window.addEventListener('health-connect-route', (event) => {
     const detail = event.detail || {};
+    if (!window.HTSStorage) return;
     const state = normalizeState(readState());
     state.health.routes = Array.isArray(state.health.routes) ? state.health.routes : [];
     const id = detail.sessionId;
@@ -111,17 +91,10 @@
     const route = { ...detail, importedAt: new Date().toISOString() };
     if (existing >= 0) state.health.routes[existing] = route; else state.health.routes.push(route);
     const log = state.log.find((x) => x.healthConnectSessionId === id);
-    if (log) {
-      log.meta = { ...(log.meta || {}), routeStatus: 'available', distanceKm: Number(detail.distanceKm || 0), elevationGainM: Number(detail.elevationGainM || 0) };
-      log.distanceKm = Number(detail.distanceKm || 0);
-    }
+    if (log) { log.meta = { ...(log.meta || {}), routeStatus: 'available', distanceKm: Number(detail.distanceKm || 0), elevationGainM: Number(detail.elevationGainM || 0) }; log.distanceKm = Number(detail.distanceKm || 0); }
     writeState(state);
     window.dispatchEvent(new CustomEvent('health-connect-state-updated', { detail: route }));
   });
-  const boot = () => {
-    if (!window.HTSStorage) return;
-    readNativeSummary();
-    sync(30).catch(() => {});
-  };
+  const boot = async () => { try { await ensureStorage(); readNativeSummary(); await sync(30).catch(() => {}); } catch (_) {} };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true }); else boot();
 })();
