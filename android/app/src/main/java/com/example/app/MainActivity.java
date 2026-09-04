@@ -20,6 +20,8 @@ public class MainActivity extends BridgeActivity {
     private static final String STATE_KEY = "state";
     private static final int NOTIFICATION_PERMISSION_REQUEST = 7001;
     private static final int DAILY_ALARM_REQUEST = 7002;
+    private static final String HC_PROMPT_PREFS = "health_connect_prompt";
+    private static final String HC_PROMPTED_KEY = "permission_prompted_v1";
 
     private final WidgetJavascriptBridge widgetBridge = new WidgetJavascriptBridge();
     private HealthConnectBridge healthBridge;
@@ -32,6 +34,7 @@ public class MainActivity extends BridgeActivity {
         installWidgetBridge();
         WeeklyPhotoReceiver.schedule(this);
         NotificationHelper.ensureChannels(this);
+        scheduleInitialHealthConnectPermissionPrompt();
     }
 
     @Override public void onResume() {
@@ -56,6 +59,32 @@ public class MainActivity extends BridgeActivity {
         }
         widgetBridgeInstalled = false;
         super.onDestroy();
+    }
+
+    private void scheduleInitialHealthConnectPermissionPrompt() {
+        getWindow().getDecorView().postDelayed(() -> {
+            if (healthBridge == null || isFinishing() || (Build.VERSION.SDK_INT >= 17 && isDestroyed())) return;
+            boolean alreadyPrompted = getSharedPreferences(HC_PROMPT_PREFS, MODE_PRIVATE)
+                    .getBoolean(HC_PROMPTED_KEY, false);
+            if (alreadyPrompted) return;
+
+            try {
+                int status = healthBridgeStatus();
+                if (status == androidx.health.connect.client.HealthConnectClient.SDK_AVAILABLE) {
+                    getSharedPreferences(HC_PROMPT_PREFS, MODE_PRIVATE)
+                            .edit().putBoolean(HC_PROMPTED_KEY, true).apply();
+                    healthBridge.requestHealthPermissions();
+                }
+            } catch (Throwable ignored) {
+                // The in-app Health Connect controls remain available even when auto-prompt is unavailable.
+            }
+        }, 1200L);
+    }
+
+    private int healthBridgeStatus() {
+        return androidx.health.connect.client.HealthConnectClient.getSdkStatus(
+                this,
+                "com.google.android.apps.healthdata");
     }
 
     private void installWidgetBridge() {
