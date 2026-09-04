@@ -62,10 +62,8 @@ class HeartRateHealthConnectBridge(private val activity: Activity) {
 
                 val recentCutoff = end.minus(Duration.ofHours(CACHED_SAMPLE_WINDOW_HOURS))
                 val recentSamples = responseRecords
-                    .asSequence()
-                    .flatMap { record -> record.samples.asSequence() }
+                    .flatMap { record -> record.samples }
                     .filter { sample -> sample.time >= recentCutoff }
-                    .toList()
                     .takeLast(MAX_CACHED_SAMPLES)
 
                 val samples = JSONArray()
