@@ -262,7 +262,7 @@ internal class HealthConnectCacheStore(context: Context) {
             val item = array.optJSONObject(i) ?: continue
             db.execSQL(
                 "INSERT OR REPLACE INTO exercise_sessions(id, start, end, duration_minutes, exercise_type, exercise_type_name, has_route, route_status, title, notes) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                arrayOf(
+                arrayOf<Any?>(
                     item.optString("id"),
                     item.optString("start"),
                     item.optString("end"),
