@@ -2,7 +2,27 @@ package com.example.app;
 
 /** Centralized weekly schedule used by the home-screen widget. */
 public final class WidgetScheduleConfig {
-    public record Day(String name, String type, String title, String focus, String cardio) {}
+    public static final class Day {
+        private final String name;
+        private final String type;
+        private final String title;
+        private final String focus;
+        private final String cardio;
+
+        private Day(String name, String type, String title, String focus, String cardio) {
+            this.name = name;
+            this.type = type;
+            this.title = title;
+            this.focus = focus;
+            this.cardio = cardio;
+        }
+
+        public String getName() { return name; }
+        public String getType() { return type; }
+        public String getTitle() { return title; }
+        public String getFocus() { return focus; }
+        public String getCardio() { return cardio; }
+    }
 
     private static final Day[] WEEK = {
             new Day("Lunedì", "FORZA + CARDIO", "Upper Strength", "Push-up / Pull-up", "Nessun cardio"),
