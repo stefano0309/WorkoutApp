@@ -139,7 +139,10 @@
       window.dispatchEvent(new CustomEvent('offline-sync-status', { detail: { online: false, synced: false, pending: true } }));
     });
     window.addEventListener('offline-sync-request', reconcile);
-    setInterval(() => { if (getUid()) reconcile(); }, 5000);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') reconcile();
+    });
+    window.addEventListener('pageshow', reconcile);
     if (getUid()) reconcile();
     window.OfflineFirstSync = { sync: reconcile, pending: () => !!queue(), deviceId: getDeviceId, status: () => ({ online: navigator.onLine, pending: !!queue(), uid: getUid(), meta: meta() }) };
   }

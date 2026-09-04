@@ -26,19 +26,49 @@ type NativeHealthBridge = {
   readHealthSummary?: () => string | null;
 };
 
+type HealthEvent = CustomEvent<HealthSummary>;
+
 export function nativeHealthBridge(): NativeHealthBridge | null {
   const bridge = (window as Window & { AndroidHealthBridge?: NativeHealthBridge }).AndroidHealthBridge;
   return bridge || null;
 }
 
-export async function importHealthSummary(): Promise<HealthSummary | null> {
+export async function importHealthSummary(timeoutMs = 30_000): Promise<HealthSummary | null> {
   const bridge = nativeHealthBridge();
   if (!bridge) return null;
-  bridge.syncHealthConnect?.();
-  const raw = bridge.readHealthSummary?.();
-  if (!raw) return null;
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+
+    const onSync = (event: Event) => finish((event as HealthEvent).detail || null);
+    const onError = () => finish(readCachedSummary(bridge));
+
+    const cleanup = () => {
+      window.removeEventListener('health-connect-sync', onSync as EventListener);
+      window.removeEventListener('health-connect-error', onError as EventListener);
+      if (timeout) clearTimeout(timeout);
+    };
+
+    const finish = (value: HealthSummary | null) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    window.addEventListener('health-connect-sync', onSync as EventListener, { once: true });
+    window.addEventListener('health-connect-error', onError as EventListener, { once: true });
+    timeout = setTimeout(() => finish(readCachedSummary(bridge)), timeoutMs);
+    bridge.syncHealthConnect?.();
+  });
+}
+
+function readCachedSummary(bridge: NativeHealthBridge): HealthSummary | null {
+  const cached = bridge.readHealthSummary?.();
+  if (!cached) return null;
   try {
-    return JSON.parse(raw) as HealthSummary;
+    return JSON.parse(cached) as HealthSummary;
   } catch {
     return null;
   }
