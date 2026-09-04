@@ -1,7 +1,6 @@
 package com.example.app
 
 import android.app.Activity
-import android.content.Context
 import android.webkit.JavascriptInterface
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.records.HeartRateRecord
@@ -15,14 +14,10 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Duration
-import java.time.Instant
 import java.util.ArrayDeque
 
 class HeartRateHealthConnectBridge(private val activity: Activity) {
     companion object {
-        private const val PREFS = "health_connect_cache"
-        private const val SUMMARY_KEY = "summary"
-        private const val ERROR_KEY = "last_error"
         private const val PROVIDER = "com.google.android.apps.healthdata"
         private const val PAGE_SIZE = 5000
         private const val MAX_LOOKBACK_DAYS = 365
@@ -31,6 +26,7 @@ class HeartRateHealthConnectBridge(private val activity: Activity) {
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val cacheStore = HealthConnectCacheStore(activity)
     @Volatile private var destroyed = false
 
     @JavascriptInterface
@@ -43,7 +39,7 @@ class HeartRateHealthConnectBridge(private val activity: Activity) {
                 if (status != HealthConnectClient.SDK_AVAILABLE) return@launch
 
                 val client = HealthConnectClient.getOrCreate(activity, PROVIDER)
-                val end = Instant.now()
+                val end = java.time.Instant.now()
                 val start = end.minus(Duration.ofDays(safeDays.toLong()))
                 val recentCutoff = end.minus(Duration.ofHours(CACHED_SAMPLE_WINDOW_HOURS))
                 val recentSamples = ArrayDeque<JSONObject>(MAX_CACHED_SAMPLES)
@@ -52,8 +48,8 @@ class HeartRateHealthConnectBridge(private val activity: Activity) {
                 var min = Long.MAX_VALUE
                 var max = Long.MIN_VALUE
                 var sum = 0L
-                var count = 0
-                var cachedCount = 0
+                var count = 0L
+                var cachedSourceCount = 0L
 
                 do {
                     val response = client.readRecords(
@@ -76,15 +72,13 @@ class HeartRateHealthConnectBridge(private val activity: Activity) {
                             count++
 
                             if (sample.time >= recentCutoff) {
-                                if (recentSamples.size == MAX_CACHED_SAMPLES) {
-                                    recentSamples.removeFirst()
-                                }
+                                if (recentSamples.size == MAX_CACHED_SAMPLES) recentSamples.removeFirst()
                                 recentSamples.addLast(
                                     JSONObject()
                                         .put("time", sample.time.toString())
                                         .put("bpm", bpm),
                                 )
-                                cachedCount++
+                                cachedSourceCount++
                             }
                         }
                     }
@@ -92,46 +86,28 @@ class HeartRateHealthConnectBridge(private val activity: Activity) {
                 } while (!token.isNullOrEmpty())
 
                 val samples = JSONArray()
-                recentSamples.forEach { samples.put(it) }
+                recentSamples.forEach(samples::put)
+                val avg = if (count > 0L) Math.round(sum.toDouble() / count.toDouble()) else null
 
-                val prefs = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 synchronized(HealthConnectCacheLock) {
-                    val raw = prefs.getString(SUMMARY_KEY, null)
-                    val summary = runCatching {
-                        if (raw.isNullOrBlank()) JSONObject() else JSONObject(raw)
-                    }.getOrDefault(JSONObject())
-
-                    summary.put("heartRateSamples", samples)
-                    summary.put("heartRateSampleCount", count)
-                    summary.put("heartRateCachedSampleCount", recentSamples.size)
-                    summary.put("heartRateCachedSourceSampleCount", cachedCount)
-                    summary.put("heartRateSamplesTruncated", cachedCount > recentSamples.size)
-
-                    if (count > 0) {
-                        summary.put("heartRateMin", min)
-                        summary.put("heartRateMax", max)
-                        summary.put("heartRateAvg", Math.round(sum.toDouble() / count.toDouble()))
-                    } else {
-                        summary.put("heartRateMin", JSONObject.NULL)
-                        summary.put("heartRateMax", JSONObject.NULL)
-                        summary.put("heartRateAvg", JSONObject.NULL)
-                    }
-
-                    prefs.edit()
-                        .putString(SUMMARY_KEY, summary.toString())
-                        .remove(ERROR_KEY)
-                        .apply()
-                    dispatch("health-connect-heart-rate", summary)
+                    cacheStore.saveHeartRate(
+                        samples = samples,
+                        sampleCount = count,
+                        min = min.takeIf { count > 0L },
+                        max = max.takeIf { count > 0L },
+                        avg = avg,
+                        sourceSampleCount = cachedSourceCount,
+                        truncated = cachedSourceCount > recentSamples.size,
+                    )
+                    cacheStore.clearError()
+                    dispatch("health-connect-heart-rate", cacheStore.readSummary())
                 }
             } catch (t: Throwable) {
                 val error = JSONObject()
                     .put("code", if (t is SecurityException) "permission_denied" else "heart_rate_read_failed")
                     .put("message", t.toString())
                 synchronized(HealthConnectCacheLock) {
-                    activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                        .edit()
-                        .putString(ERROR_KEY, error.toString())
-                        .apply()
+                    cacheStore.saveError(error.optString("code"), error.optString("message"))
                 }
                 dispatch("health-connect-error", error)
             }
