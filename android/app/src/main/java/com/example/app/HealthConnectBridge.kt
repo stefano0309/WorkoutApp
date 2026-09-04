@@ -1,6 +1,7 @@
 package com.example.app
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.webkit.JavascriptInterface
@@ -42,6 +43,7 @@ class HealthConnectBridge(private val activity: Activity) {
         private const val ROUTE_REQUEST = 7402
         private const val MAX_LOOKBACK_DAYS = 365
         private const val PAGE_SIZE = 5000
+        private const val MAX_CACHED_ROUTES = 50
         private const val PROVIDER = "com.google.android.apps.healthdata"
     }
 
@@ -82,6 +84,14 @@ class HealthConnectBridge(private val activity: Activity) {
     }
 
     @JavascriptInterface
+    fun refreshHealthCapabilities() {
+        if (destroyed) return
+        scope.launch {
+            dispatchToWebView("health-connect-capabilities", loadHealthCapabilities())
+        }
+    }
+
+    @JavascriptInterface
     fun readHealthSummary(): String? = synchronized(HealthConnectCacheLock) {
         cacheStore.readSummary().toString().takeIf { it != "{}" }
     }
@@ -97,17 +107,56 @@ class HealthConnectBridge(private val activity: Activity) {
             result.put("apiLevel", android.os.Build.VERSION.SDK_INT)
             result.put("providerPackage", PROVIDER)
             result.put("permissionManagement", if (sdk == HealthConnectClient.SDK_AVAILABLE) "health_connect" else "unavailable")
-            result.put("readSteps", sdk == HealthConnectClient.SDK_AVAILABLE)
-            result.put("readWeight", sdk == HealthConnectClient.SDK_AVAILABLE)
-            result.put("readSleep", sdk == HealthConnectClient.SDK_AVAILABLE)
-            result.put("readExercise", sdk == HealthConnectClient.SDK_AVAILABLE)
-            result.put("readHeartRate", sdk == HealthConnectClient.SDK_AVAILABLE)
+            result.put("permissionsState", "unknown")
+            result.put("readSteps", false)
+            result.put("readWeight", false)
+            result.put("readSleep", false)
+            result.put("readExercise", false)
+            result.put("readHeartRate", false)
             result.put("exerciseRoute", if (sdk == HealthConnectClient.SDK_AVAILABLE) "consent_required" else "unavailable")
         } catch (t: Throwable) {
             result.put("supported", false)
             result.put("error", t.toString())
         }
         return result.toString()
+    }
+
+    private suspend fun loadHealthCapabilities(): JSONObject {
+        val result = JSONObject()
+        return try {
+            val sdk = status()
+            result.put("supported", sdk != HealthConnectClient.SDK_UNAVAILABLE)
+            result.put("available", sdk == HealthConnectClient.SDK_AVAILABLE)
+            result.put("status", sdk)
+            result.put("apiLevel", android.os.Build.VERSION.SDK_INT)
+            result.put("providerPackage", PROVIDER)
+            if (sdk != HealthConnectClient.SDK_AVAILABLE) {
+                result.put("permissionsState", "unavailable")
+                result.put("readSteps", false)
+                result.put("readWeight", false)
+                result.put("readSleep", false)
+                result.put("readExercise", false)
+                result.put("readHeartRate", false)
+                result.put("exerciseRoute", "unavailable")
+                return result
+            }
+
+            val granted = HealthConnectClient.getOrCreate(activity, PROVIDER)
+                .permissionController
+                .getGrantedPermissions()
+            result.put("permissionsState", "ready")
+            result.put("readSteps", granted.contains(HealthPermission.getReadPermission(StepsRecord::class)))
+            result.put("readWeight", granted.contains(HealthPermission.getReadPermission(WeightRecord::class)))
+            result.put("readSleep", granted.contains(HealthPermission.getReadPermission(SleepSessionRecord::class)))
+            result.put("readExercise", granted.contains(HealthPermission.getReadPermission(ExerciseSessionRecord::class)))
+            result.put("readHeartRate", granted.contains(HealthPermission.getReadPermission(HeartRateRecord::class)))
+            result.put("exerciseRoute", "consent_required")
+            result
+        } catch (t: Throwable) {
+            result.put("supported", false)
+            result.put("permissionsState", "error")
+            result.put("error", t.toString())
+        }
     }
 
     @JavascriptInterface
@@ -123,6 +172,11 @@ class HealthConnectBridge(private val activity: Activity) {
                     saveError(statusCode(), statusMessage())
                     return@launch
                 }
+                val granted = hc.permissionController.getGrantedPermissions()
+                val missing = permissions - granted
+                if (missing.isNotEmpty()) {
+                    dispatchToWebView("health-connect-permission-state", loadHealthCapabilities())
+                }
                 val end = Instant.now()
                 val start = end.minus(Duration.ofDays(safeDays.toLong()))
                 val range = TimeRangeFilter.between(start, end)
@@ -135,30 +189,38 @@ class HealthConnectBridge(private val activity: Activity) {
                 }
 
                 runCatching {
-                    val aggregate = hc.aggregate(
-                        AggregateRequest(
-                            metrics = setOf(StepsRecord.COUNT_TOTAL),
-                            timeRangeFilter = range,
-                        ),
-                    )
-                    result.put("steps", aggregate[StepsRecord.COUNT_TOTAL] ?: 0L)
+                    if (granted.contains(HealthPermission.getReadPermission(StepsRecord::class))) {
+                        val aggregate = hc.aggregate(
+                            AggregateRequest(
+                                metrics = setOf(StepsRecord.COUNT_TOTAL),
+                                timeRangeFilter = range,
+                            ),
+                        )
+                        result.put("steps", aggregate[StepsRecord.COUNT_TOTAL] ?: 0L)
+                    }
                 }.onFailure { saveError("steps_read_failed", it.toString()) }
 
                 runCatching {
-                    val weights = readAll(hc, WeightRecord::class, range)
-                    if (weights.isNotEmpty()) {
-                        result.put("weightKg", weights.maxBy { it.time }.weight.inKilograms)
+                    if (granted.contains(HealthPermission.getReadPermission(WeightRecord::class))) {
+                        val weights = readAll(hc, WeightRecord::class, range)
+                        if (weights.isNotEmpty()) {
+                            result.put("weightKg", weights.maxBy { it.time }.weight.inKilograms)
+                        }
                     }
                 }.onFailure { saveError("weight_read_failed", it.toString()) }
 
                 runCatching {
-                    val sleeps = readAll(hc, SleepSessionRecord::class, range).sortedBy { it.startTime }
-                    serializeSleep(result, sleeps)
+                    if (granted.contains(HealthPermission.getReadPermission(SleepSessionRecord::class))) {
+                        val sleeps = readAll(hc, SleepSessionRecord::class, range).sortedBy { it.startTime }
+                        serializeSleep(result, sleeps)
+                    }
                 }.onFailure { saveError("sleep_read_failed", it.toString()) }
 
                 runCatching {
-                    val exercises = readAll(hc, ExerciseSessionRecord::class, range).sortedBy { it.startTime }
-                    serializeExercises(result, exercises)
+                    if (granted.contains(HealthPermission.getReadPermission(ExerciseSessionRecord::class))) {
+                        val exercises = readAll(hc, ExerciseSessionRecord::class, range).sortedBy { it.startTime }
+                        serializeExercises(result, exercises)
+                    }
                 }.onFailure { saveError("exercise_read_failed", it.toString()) }
 
                 persistAndDispatch(result)
@@ -288,6 +350,7 @@ class HealthConnectBridge(private val activity: Activity) {
             }.getOrDefault(emptySet())
             val payload = JSONObject().put("grantedCount", granted.size)
             dispatchToWebView("health-connect-permissions", payload)
+            refreshHealthCapabilities()
             if (granted.isNotEmpty()) syncHealthConnectDays(30)
             return
         }
@@ -385,25 +448,27 @@ class HealthConnectBridge(private val activity: Activity) {
     }
 
     private fun cacheRoute(id: String, route: JSONObject) = synchronized(HealthConnectCacheLock) {
-        runCatching { cacheStore.saveRoute(id, route) }
-            .onFailure { saveError("route_cache_failed", it.toString()) }
+        runCatching {
+            cacheStore.writeRoute(id, route)
+            cacheStore.trimRoutes(MAX_CACHED_ROUTES)
+        }.onFailure { saveError("route_cache_failed", it.toString()) }
     }
 
     @JavascriptInterface
     fun readExerciseRoute(sessionId: String?): String? = synchronized(HealthConnectCacheLock) {
         if (sessionId.isNullOrBlank()) return@synchronized null
-        cacheStore.readRoute(sessionId)
+        cacheStore.readRoute(sessionId)?.toString()
     }
 
     @JavascriptInterface
     fun readLastError(): String? = synchronized(HealthConnectCacheLock) {
-        cacheStore.readError()
+        cacheStore.readLastError()?.toString()
     }
 
     private fun persistAndDispatch(result: JSONObject) = synchronized(HealthConnectCacheLock) {
         if (destroyed) return@synchronized
-        cacheStore.saveSummary(result)
-        cacheStore.clearError()
+        cacheStore.replaceSummary(result)
+        cacheStore.clearLastError()
         dispatchToWebView("health-connect-sync", result)
     }
 
@@ -412,7 +477,7 @@ class HealthConnectBridge(private val activity: Activity) {
             JSONObject().put("code", code).put("message", message).put("timestamp", Instant.now().toString())
         }.getOrDefault(JSONObject())
         synchronized(HealthConnectCacheLock) {
-            cacheStore.saveError(code, message)
+            cacheStore.writeLastError(error)
         }
         dispatchToWebView("health-connect-error", error)
     }
