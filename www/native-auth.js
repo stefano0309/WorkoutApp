@@ -18,31 +18,16 @@
   let pluginPromise = null;
   let signInPromise = null;
 
-  const waitForFirebase = () => {
-    if (window.__fb) return Promise.resolve(window.__fb);
-    return new Promise((resolve, reject) => {
-      let done = false;
-      const finish = (fn, value) => {
-        if (done) return;
-        done = true;
-        clearInterval(timer);
-        clearTimeout(timeout);
-        window.removeEventListener('firebase-ready', onReady);
-        fn(value);
-      };
-      const onReady = () => window.__fb && finish(resolve, window.__fb);
-      const timer = setInterval(onReady, 50);
-      const timeout = setTimeout(() => finish(reject, new Error('firebase-api-timeout')), 15000);
-      window.addEventListener('firebase-ready', onReady);
-    });
-  };
-
   const loadPlugin = async () => {
     if (pluginPromise) return pluginPromise;
     pluginPromise = (async () => {
-      const existing = window.Capacitor?.Plugins?.FirebaseAuthentication;
-      if (existing && typeof existing.signInWithGoogle === 'function') return existing;
+      // Capacitor normally exposes registered native plugins here. Prefer this
+      // instance so the proxy is guaranteed to use the app's native bridge.
+      const globalPlugin = window.Capacitor?.Plugins?.FirebaseAuthentication;
+      if (globalPlugin && typeof globalPlugin.signInWithGoogle === 'function') return globalPlugin;
 
+      // Fallback for the no-bundler web shell: register the official proxy
+      // against the same Capacitor runtime exposed by the app.
       const module = await import('./capacitor-firebase-auth.js');
       const plugin = module.FirebaseAuthentication;
       if (!plugin || typeof plugin.signInWithGoogle !== 'function') {
@@ -76,25 +61,38 @@
     return authApi;
   };
 
+  const normalizeError = (error) => {
+    const code = error?.code || 'google-sign-in-failed';
+    const message = error?.message || String(error);
+    return { code, message };
+  };
+
   const signIn = async () => {
     if (signInPromise) return signInPromise;
     signInPromise = (async () => {
+      dispatch('firebase-auth-started', { provider: 'google', native: true });
       const [p, { auth, GoogleAuthProvider, signInWithCredential }] = await Promise.all([
         loadPlugin(),
         loadAuth(),
       ]);
 
-      dispatch('firebase-auth-started', { provider: 'google', native: true });
-
-      // The legacy Google sign-in implementation is more compatible with
-      // older Samsung devices such as the Galaxy A20 than Credential Manager.
       const result = await p.signInWithGoogle({
         skipNativeAuth: true,
         useCredentialManager: false,
       });
 
       const idToken = result?.credential?.idToken;
-      if (!idToken) throw new Error('google-id-token-missing');
+      if (!idToken) {
+        const nativeUser = result?.user;
+        if (nativeUser?.uid && !result?.credential) {
+          throw Object.assign(new Error('google-id-token-missing'), {
+            code: 'google-id-token-missing',
+          });
+        }
+        throw Object.assign(new Error('google-id-token-missing'), {
+          code: 'google-id-token-missing',
+        });
+      }
 
       const credential = GoogleAuthProvider.credential(idToken);
       const firebaseResult = await signInWithCredential(auth, credential);
@@ -115,14 +113,15 @@
     try {
       return await signInPromise;
     } catch (error) {
+      const normalized = normalizeError(error);
       console.error('[HTS Auth] Google Android sign-in failed', error);
       dispatch('firebase-auth-error', {
         provider: 'google',
         native: true,
-        code: error?.code || 'google-sign-in-failed',
-        message: error?.message || String(error),
+        code: normalized.code,
+        message: normalized.message,
       });
-      throw error;
+      throw Object.assign(new Error(normalized.message), { code: normalized.code });
     } finally {
       signInPromise = null;
     }
@@ -152,27 +151,29 @@
 
   window.__HTS_NATIVE_GOOGLE_SIGN_IN__ = signIn;
   window.__HTS_NATIVE_GOOGLE_SIGN_OUT__ = signOutUser;
-  window.__HTS_NATIVE_AUTH_WAIT_FOR_FIREBASE__ = waitForFirebase;
 
   const boot = async () => {
     try {
       await loadPlugin();
       if (patch()) return;
-      window.addEventListener('firebase-ready', patch);
       const timer = setInterval(() => {
         if (patch()) clearInterval(timer);
-      }, 50);
-      setTimeout(() => clearInterval(timer), 15000);
+      }, 25);
+      window.addEventListener('firebase-ready', patch);
+      setTimeout(() => clearInterval(timer), 20000);
     } catch (error) {
+      const normalized = normalizeError(error);
       console.error('[HTS Auth] bootstrap failed', error);
       dispatch('firebase-auth-error', {
         provider: 'google',
         native: true,
-        code: error?.code || 'native-auth-bootstrap-failed',
-        message: error?.message || String(error),
+        code: normalized.code,
+        message: normalized.message,
       });
     }
   };
 
+  // Start immediately; this script is injected by the Android host before
+  // the other native integrations so the login method gets patched early.
   boot();
 })();
