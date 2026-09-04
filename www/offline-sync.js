@@ -130,8 +130,36 @@
     };
   }
 
+  function unifyLegacyCloudSync() {
+    const cloudSync = window.CloudSync;
+    if (!cloudSync || cloudSync.__offlineFirstUnified) return;
+
+    cloudSync.__offlineFirstUnified = true;
+    const legacyUpload = cloudSync.upload;
+    const legacyScheduleUpload = cloudSync.scheduleUpload;
+
+    cloudSync.scheduleUpload = () => {
+      schedule();
+    };
+    cloudSync.upload = () => reconcile();
+
+    if (typeof cloudSync.download === 'function') {
+      cloudSync.download = () => reconcile();
+    }
+    if (typeof cloudSync.startWatch === 'function') {
+      cloudSync.startWatch = () => {};
+    }
+
+    if (legacyUpload && legacyScheduleUpload) {
+      window.dispatchEvent(new CustomEvent('offline-sync-legacy-disabled', {
+        detail: { upload: true, scheduleUpload: true },
+      }));
+    }
+  }
+
   async function boot() {
     patchStorage();
+    unifyLegacyCloudSync();
     window.addEventListener('online', reconcile);
     window.addEventListener('offline', () => {
       const state = readState();
@@ -144,7 +172,14 @@
     });
     window.addEventListener('pageshow', reconcile);
     if (getUid()) reconcile();
-    window.OfflineFirstSync = { sync: reconcile, pending: () => !!queue(), deviceId: getDeviceId, status: () => ({ online: navigator.onLine, pending: !!queue(), uid: getUid(), meta: meta() }) };
+    window.OfflineFirstSync = {
+      sync: reconcile,
+      schedule,
+      pending: () => !!queue(),
+      deviceId: getDeviceId,
+      status: () => ({ online: navigator.onLine, pending: !!queue(), uid: getUid(), meta: meta() }),
+    };
+    unifyLegacyCloudSync();
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
