@@ -1,61 +1,36 @@
 import { useEffect, useState } from 'react';
 import { SessionStore, type WorkoutSessionDraft } from '../../store/session.store';
 
-const createSessionDraft = (): WorkoutSessionDraft => {
-  const now = new Date().toISOString();
-  return {
+export function SessionEditor() {
+  const [session, setSession] = useState<WorkoutSessionDraft>(() => SessionStore.load() || {
     id: `session-${Date.now()}`,
     name: 'Nuova sessione',
-    startedAt: now,
-    updatedAt: now,
+    startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
     exercises: [],
     healthConnectRunId: null,
-  };
-};
-
-export function useSessionEditor() {
-  const [session, setSession] = useState<WorkoutSessionDraft>(
-    () => SessionStore.load() ?? createSessionDraft(),
-  );
+  });
 
   useEffect(() => {
     const timer = window.setTimeout(() => SessionStore.save(session), 500);
     return () => window.clearTimeout(timer);
   }, [session]);
 
-  const addExercise = () =>
-    setSession((prev) => ({
-      ...prev,
-      exercises: [
-        ...prev.exercises,
-        {
-          id: `exercise-${Date.now()}`,
-          name: 'Nuovo esercizio',
-          sets: [
-            {
-              id: `set-${Date.now()}`,
-              reps: 8,
-              loadKg: 0,
-              rpe: 7,
-              restSeconds: 90,
-              completed: false,
-            },
-          ],
-        },
-      ],
-    }));
-
-  const clear = () => {
-    SessionStore.clear();
-    setSession(createSessionDraft());
-  };
+  const addExercise = () => setSession(prev => ({
+    ...prev,
+    exercises: [...prev.exercises, {
+      id: `exercise-${Date.now()}`,
+      name: 'Nuovo esercizio',
+      sets: [{ id: `set-${Date.now()}`, reps: 8, loadKg: 0, rpe: 7, restSeconds: 90, completed: false }],
+    }],
+  }));
 
   return {
     session,
     setSession,
     addExercise,
-    clear,
+    clear: () => { SessionStore.clear(); setSession({ ...session, exercises: [] }); },
   };
 }
 
-export default useSessionEditor;
+export default SessionEditor;
