@@ -44,7 +44,7 @@
       if (!id || existingHealthIds.has(id)) continue;
       const route = run.route || null;
       const distanceKm = Number(route?.distanceKm || 0);
-      state.log.push({ type: 'run', source: 'health_connect', healthConnectSessionId: id, label: run.exerciseTypeName || 'running', date: String(run.start || '').slice(0, 10) || new Date().toISOString().slice(0, 10), at: run.start || new Date().toISOString(), meta: { durationMinutes: Number(run.durationMinutes || 0), distanceKm, elevationGainM: Number(route?.elevationGainM || 0), routeStatus: route ? 'available' : (run.routeStatus || (run.hasRoute ? 'consent_required' : 'not_available')) }, distanceKm });
+      state.log.push({ type: 'run', source: 'health_connect', healthConnectSessionId: id, label: run.exerciseTypeName || 'running', date: String(run.start || '').slice(0, 10) || new Date().toISOString().slice(0, 10), at: run.start || new Date().toISOString(), meta: { durationMinutes: Number(run.durationMinutes || 0), distanceKm, elevationGainM: route?.elevationGainM ?? null, routeStatus: route ? 'available' : (run.routeStatus || (run.hasRoute ? 'consent_required' : 'not_available')) }, distanceKm });
       existingHealthIds.add(id);
     }
     writeState(state);
@@ -91,7 +91,7 @@
     const route = { ...detail, importedAt: new Date().toISOString() };
     if (existing >= 0) state.health.routes[existing] = route; else state.health.routes.push(route);
     const log = state.log.find((x) => x.healthConnectSessionId === id);
-    if (log) { log.meta = { ...(log.meta || {}), routeStatus: 'available', distanceKm: Number(detail.distanceKm || 0), elevationGainM: Number(detail.elevationGainM || 0) }; log.distanceKm = Number(detail.distanceKm || 0); }
+    if (log) { log.meta = { ...(log.meta || {}), routeStatus: 'available', distanceKm: Number(detail.distanceKm || 0), elevationGainM: detail.elevationGainM ?? null }; log.distanceKm = Number(detail.distanceKm || 0); }
     writeState(state);
     window.dispatchEvent(new CustomEvent('health-connect-state-updated', { detail: route }));
   });
