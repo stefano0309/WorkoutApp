@@ -14,8 +14,8 @@
     try { window.dispatchEvent(new CustomEvent(name, { detail })); } catch (_) {}
   };
 
-  const plugin = () => window.Capacitor?.Plugins?.FirebaseAuthentication || null;
   let authApi = null;
+  let pluginPromise = null;
   let signInPromise = null;
 
   const waitForFirebase = () => {
@@ -35,6 +35,27 @@
       const timeout = setTimeout(() => finish(reject, new Error('firebase-api-timeout')), 15000);
       window.addEventListener('firebase-ready', onReady);
     });
+  };
+
+  const loadPlugin = async () => {
+    if (pluginPromise) return pluginPromise;
+    pluginPromise = (async () => {
+      const existing = window.Capacitor?.Plugins?.FirebaseAuthentication;
+      if (existing && typeof existing.signInWithGoogle === 'function') return existing;
+
+      const module = await import('./capacitor-firebase-auth.js');
+      const plugin = module.FirebaseAuthentication;
+      if (!plugin || typeof plugin.signInWithGoogle !== 'function') {
+        throw new Error('firebase-authentication-plugin-unavailable');
+      }
+      return plugin;
+    })();
+    try {
+      return await pluginPromise;
+    } catch (error) {
+      pluginPromise = null;
+      throw error;
+    }
   };
 
   const loadAuth = async () => {
@@ -58,18 +79,20 @@
   const signIn = async () => {
     if (signInPromise) return signInPromise;
     signInPromise = (async () => {
-      const p = plugin();
-      if (!p || typeof p.signInWithGoogle !== 'function') {
-        throw new Error('firebase-authentication-plugin-unavailable');
-      }
+      const [p, { auth, GoogleAuthProvider, signInWithCredential }] = await Promise.all([
+        loadPlugin(),
+        loadAuth(),
+      ]);
 
-      const { auth, GoogleAuthProvider, signInWithCredential } = await loadAuth();
       dispatch('firebase-auth-started', { provider: 'google', native: true });
 
+      // The legacy Google sign-in implementation is more compatible with
+      // older Samsung devices such as the Galaxy A20 than Credential Manager.
       const result = await p.signInWithGoogle({
         skipNativeAuth: true,
-        useCredentialManager: true,
+        useCredentialManager: false,
       });
+
       const idToken = result?.credential?.idToken;
       if (!idToken) throw new Error('google-id-token-missing');
 
@@ -106,7 +129,7 @@
   };
 
   const signOutUser = async () => {
-    const p = plugin();
+    const p = await loadPlugin();
     const { auth, signOut: firebaseSignOut } = await loadAuth();
     try {
       if (p && typeof p.signOut === 'function') await p.signOut();
@@ -123,7 +146,7 @@
     fb.signOutUser = signOutUser;
     fb.__nativeGoogleAuthManaged = true;
     window.__HTS_NATIVE_AUTH_READY__ = true;
-    dispatch('firebase-auth-ready', { provider: 'google', native: true, plugin: !!plugin() });
+    dispatch('firebase-auth-ready', { provider: 'google', native: true });
     return true;
   };
 
@@ -133,7 +156,7 @@
 
   const boot = async () => {
     try {
-      if (!plugin()) throw new Error('firebase-authentication-plugin-unavailable');
+      await loadPlugin();
       if (patch()) return;
       window.addEventListener('firebase-ready', patch);
       const timer = setInterval(() => {
