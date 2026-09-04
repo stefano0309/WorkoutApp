@@ -42,16 +42,23 @@ public final class WidgetJavascriptBridge {
         sendWidgetSync();
     }
 
+    @JavascriptInterface public boolean hasNotificationPermission() {
+        return Build.VERSION.SDK_INT < 33
+                || activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+    }
+
     @JavascriptInterface public void requestNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= 33
-                && activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+        if (Build.VERSION.SDK_INT >= 33 && !hasNotificationPermission()) {
             activity.runOnUiThread(() -> activity.requestPermissions(
                     new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_REQUEST));
         }
     }
 
-    @JavascriptInterface public void scheduleDailyNotification(int hour, int minute, String title, String body) {
-        requestNotificationPermission();
+    @JavascriptInterface public boolean scheduleDailyNotification(int hour, int minute, String title, String body) {
+        if (!hasNotificationPermission()) {
+            requestNotificationPermission();
+            return false;
+        }
         AlarmManager am = (AlarmManager) activity.getSystemService(Context.ALARM_SERVICE);
         Intent intent = new Intent(activity, WorkoutNotificationReceiver.class)
                 .setAction(WorkoutNotificationReceiver.ACTION_DAILY)
@@ -65,6 +72,7 @@ public final class WidgetJavascriptBridge {
         if (next.getTimeInMillis() <= System.currentTimeMillis()) next.add(Calendar.DAY_OF_YEAR, 1);
         am.cancel(pi);
         am.setInexactRepeating(AlarmManager.RTC_WAKEUP, next.getTimeInMillis(), AlarmManager.INTERVAL_DAY, pi);
+        return true;
     }
 
     @JavascriptInterface public void cancelDailyNotification() {
@@ -76,12 +84,16 @@ public final class WidgetJavascriptBridge {
         am.cancel(pi);
     }
 
-    @JavascriptInterface public void notifyRestFinished() {
-        requestNotificationPermission();
+    @JavascriptInterface public boolean notifyRestFinished() {
+        if (!hasNotificationPermission()) {
+            requestNotificationPermission();
+            return false;
+        }
         activity.sendBroadcast(new Intent(activity, WorkoutNotificationReceiver.class)
                 .setAction(WorkoutNotificationReceiver.ACTION_REST)
                 .putExtra("title", "Recupero terminato")
                 .putExtra("body", "Pronto per la prossima serie."));
+        return true;
     }
 
     private void sendWidgetSync() {
