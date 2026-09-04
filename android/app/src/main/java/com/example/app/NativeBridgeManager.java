@@ -53,16 +53,21 @@ public final class NativeBridgeManager {
 
     private void syncWidgetState(WebView webView) {
         String script = "javascript:(function(){" +
-                "if(window.__hybridWidgetBridgeSync){window.__hybridWidgetBridgeSync();return;}" +
-                "var KEY='hybridTrainingSystem';var last='';" +
-                "window.__hybridWidgetBridgeSync=function(){try{" +
+                "if(window.__hybridWidgetBridgeSyncInstalled)return;" +
+                "window.__hybridWidgetBridgeSyncInstalled=true;" +
+                "var KEY='hybridTrainingSystem';var last=null;" +
+                "function sync(){try{" +
                 "var raw=localStorage.getItem(KEY);" +
                 "if(raw&&raw!==last&&window.AndroidWidgetBridge){window.AndroidWidgetBridge.sync(raw);last=raw;}" +
-                "}catch(e){}};" +
-                "window.__hybridWidgetBridgeSync();" +
-                "window.__hybridWidgetBridgeTimer=window.__hybridWidgetBridgeTimer||setInterval(window.__hybridWidgetBridgeSync,1000);" +
-                "document.addEventListener('visibilitychange',window.__hybridWidgetBridgeSync);" +
-                "window.addEventListener('pageshow',window.__hybridWidgetBridgeSync);" +
+                "}catch(e){}}" +
+                "var originalSetItem=localStorage.setItem.bind(localStorage);" +
+                "localStorage.setItem=function(key,value){" +
+                "originalSetItem(key,value);" +
+                "if(key===KEY)sync();" +
+                "};" +
+                "sync();" +
+                "document.addEventListener('visibilitychange',sync);" +
+                "window.addEventListener('pageshow',sync);" +
                 "})();";
         webView.evaluateJavascript(script, null);
     }
