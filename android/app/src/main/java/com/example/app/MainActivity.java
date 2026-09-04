@@ -46,7 +46,7 @@ public class MainActivity extends BridgeActivity {
         if (healthBridge != null) healthBridge.handleActivityResult(requestCode, resultCode, data);
     }
 
-    @Override protected void onDestroy() {
+    @Override public void onDestroy() {
         if (installedWebView != null) {
             installedWebView.removeJavascriptInterface("AndroidWidgetBridge");
             installedWebView.removeJavascriptInterface("AndroidHealthBridge");
