@@ -9,18 +9,35 @@
   const DEVICE_KEY = 'hts.deviceId.v1';
   const DEBOUNCE_MS = 1800;
 
+  const ensureStorage = () => {
+    if (window.HTSStorage) return Promise.resolve(window.HTSStorage);
+    return new Promise((resolve, reject) => {
+      const existing = document.querySelector('script[data-hts-storage-repository]');
+      if (existing) {
+        existing.addEventListener('load', () => resolve(window.HTSStorage), { once: true });
+        existing.addEventListener('error', () => reject(new Error('storage-repository-load-failed')), { once: true });
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = 'storage-repository.js';
+      script.async = false;
+      script.dataset.htsStorageRepository = 'true';
+      script.addEventListener('load', () => window.HTSStorage ? resolve(window.HTSStorage) : reject(new Error('storage-repository-unavailable')), { once: true });
+      script.addEventListener('error', () => reject(new Error('storage-repository-load-failed')), { once: true });
+      document.head.appendChild(script);
+    });
+  };
+
   const getDeviceId = () => {
-    let id = localStorage.getItem(DEVICE_KEY);
+    let id = window.HTSStorage.read(DEVICE_KEY, null);
     if (!id) {
       id = (crypto?.randomUUID?.() || ('device-' + Date.now() + '-' + Math.random().toString(36).slice(2))).toString();
-      localStorage.setItem(DEVICE_KEY, id);
+      window.HTSStorage.write(DEVICE_KEY, id);
     }
     return id;
   };
-  const readJson = (key, fallback) => {
-    try { return JSON.parse(localStorage.getItem(key) || 'null') ?? fallback; } catch { return fallback; }
-  };
-  const writeJson = (key, value) => localStorage.setItem(key, JSON.stringify(value));
+  const readJson = (key, fallback) => window.HTSStorage.read(key, fallback);
+  const writeJson = (key, value) => window.HTSStorage.write(key, value);
   const readState = () => readJson(STATE_KEY, null);
   const getUid = () => readState()?.account?.uid || null;
   const stamp = (state) => {
@@ -32,7 +49,7 @@
   const meta = () => readJson(META_KEY, { deviceId: getDeviceId(), lastRemoteAt: null, lastLocalAt: null });
   const setMeta = (patch) => writeJson(META_KEY, { ...meta(), ...patch, deviceId: getDeviceId() });
   const queue = () => readJson(QUEUE_KEY, null);
-  const clearQueue = () => localStorage.removeItem(QUEUE_KEY);
+  const clearQueue = () => window.HTSStorage.remove(QUEUE_KEY);
   const enqueue = (state) => {
     const item = { version: 1, deviceId: getDeviceId(), updatedAt: state.lastSavedAt || new Date().toISOString(), state: stamp(state) };
     writeJson(QUEUE_KEY, item);
@@ -51,10 +68,7 @@
     for (const [index, item] of remoteItems.entries()) {
       const key = collectionKey(item, index);
       const existing = merged.get(key);
-      if (!existing) {
-        merged.set(key, item);
-        continue;
-      }
+      if (!existing) { merged.set(key, item); continue; }
       const existingAt = time(existing?.updatedAt || existing?.timestamp || existing?.at || existing?.date);
       const remoteAt = time(item?.updatedAt || item?.timestamp || item?.at || item?.date);
       merged.set(key, remoteAt >= existingAt ? item : existing);
@@ -78,14 +92,8 @@
       settings: { ...(local.settings || {}), ...(remote.settings || {}) },
       profile: { ...(local.profile || {}), ...(remote.profile || {}) },
       assessment: { ...(local.assessment || {}), ...(remote.assessment || {}) },
-      metrics: mergeCollection(
-        Array.isArray(local.metrics) ? local.metrics : [],
-        Array.isArray(remote.metrics) ? remote.metrics : [],
-      ),
-      log: mergeCollection(
-        Array.isArray(local.log) ? local.log : [],
-        Array.isArray(remote.log) ? remote.log : [],
-      ),
+      metrics: mergeCollection(Array.isArray(local.metrics) ? local.metrics : [], Array.isArray(remote.metrics) ? remote.metrics : []),
+      log: mergeCollection(Array.isArray(local.log) ? local.log : [], Array.isArray(remote.log) ? remote.log : []),
       _storageVersion: Math.max(Number(local._storageVersion || 2), Number(remote._storageVersion || 2)),
       lastSavedAt: newest.lastSavedAt || new Date().toISOString(),
     };
@@ -94,7 +102,6 @@
       Array.isArray(local.health?.routes) ? local.health.routes : [],
       Array.isArray(remote.health?.routes) ? remote.health.routes : [],
     );
-
     return merged;
   };
 
@@ -134,7 +141,7 @@
     if (!remoteState) return false;
     const local = readState() || {};
     const next = mergeState(local, remoteState);
-    localStorage.setItem(STATE_KEY, JSON.stringify(next));
+    window.HTSStorage.write(STATE_KEY, next);
     setMeta({ lastRemoteAt: next.lastSavedAt || new Date().toISOString() });
     window.dispatchEvent(new CustomEvent('offline-sync-applied', { detail: next }));
     return true;
@@ -170,9 +177,7 @@
       const local = readState();
       if (local) enqueue(local);
       window.dispatchEvent(new CustomEvent('offline-sync-status', { detail: { online: navigator.onLine, synced: false, pending: true, error: String(error) } }));
-    } finally {
-      busy = false;
-    }
+    } finally { busy = false; }
   }
 
   function schedule() {
@@ -183,37 +188,25 @@
   }
 
   function patchStorage() {
-    const original = localStorage.setItem.bind(localStorage);
-    localStorage.setItem = (key, value) => {
-      original(key, value);
-      if (key === STATE_KEY && !busy) schedule();
-    };
+    if (!window.HTSStorage?.available) return;
+    window.HTSStorage.onChange?.(STATE_KEY, schedule);
   }
 
   function unifyLegacyCloudSync() {
     const cloudSync = window.CloudSync;
     if (!cloudSync || cloudSync.__offlineFirstUnified) return;
-
     cloudSync.__offlineFirstUnified = true;
     const legacyUpload = cloudSync.upload;
     const legacyScheduleUpload = cloudSync.scheduleUpload;
-
-    cloudSync.scheduleUpload = () => {
-      schedule();
-    };
+    cloudSync.scheduleUpload = () => schedule();
     cloudSync.upload = () => reconcile();
-
     if (typeof cloudSync.download === 'function') cloudSync.download = () => reconcile();
     if (typeof cloudSync.startWatch === 'function') cloudSync.startWatch = () => {};
-
-    if (legacyUpload && legacyScheduleUpload) {
-      window.dispatchEvent(new CustomEvent('offline-sync-legacy-disabled', {
-        detail: { upload: true, scheduleUpload: true },
-      }));
-    }
+    if (legacyUpload && legacyScheduleUpload) window.dispatchEvent(new CustomEvent('offline-sync-legacy-disabled', { detail: { upload: true, scheduleUpload: true } }));
   }
 
   async function boot() {
+    await ensureStorage();
     patchStorage();
     unifyLegacyCloudSync();
     window.addEventListener('online', reconcile);
@@ -223,9 +216,7 @@
       window.dispatchEvent(new CustomEvent('offline-sync-status', { detail: { online: false, synced: false, pending: true } }));
     });
     window.addEventListener('offline-sync-request', reconcile);
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') reconcile();
-    });
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reconcile(); });
     window.addEventListener('pageshow', reconcile);
     if (getUid()) reconcile();
     window.OfflineFirstSync = {
