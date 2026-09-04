@@ -52,9 +52,6 @@ public class MainActivity extends BridgeActivity {
             installedWebView.removeJavascriptInterface("AndroidWidgetBridge");
             installedWebView.removeJavascriptInterface("AndroidHealthBridge");
         }
-        if (healthBridge != null) {
-            healthBridge.shutdown();
-        }
         super.onDestroy();
     }
 
