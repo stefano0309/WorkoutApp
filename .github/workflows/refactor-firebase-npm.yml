@@ -50,12 +50,19 @@ jobs:
             'www/offline-sync.js',
           ];
           const pattern = /https:\/\/www\.gstatic\.com\/firebase\/12\.18\.0\/[^'\"`]+/g;
+          let replacedCount = 0;
           for (const file of files) {
             const before = fs.readFileSync(file, 'utf8');
-            const after = before.replace(pattern, './firebase-runtime.bundle.js');
-            if (before === after) throw new Error(`No Firebase CDN imports replaced in ${file}`);
-            fs.writeFileSync(file, after);
+            const matches = before.match(pattern) || [];
+            if (matches.length) {
+              fs.writeFileSync(file, before.replace(pattern, './firebase-runtime.bundle.js'));
+              replacedCount += matches.length;
+              console.log(`${file}: replaced ${matches.length} Firebase CDN import(s)`);
+            } else {
+              console.log(`${file}: no Firebase CDN imports present; leaving unchanged`);
+            }
           }
+          if (replacedCount === 0) throw new Error('No Firebase CDN imports were present in any migration target');
           NODE
 
       - name: Remove one-shot migration workflow
