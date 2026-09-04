@@ -128,7 +128,6 @@
     const s = summary || {};
     const sleeps = Array.isArray(s.sleepSessions) ? s.sleepSessions : [];
     const exercises = Array.isArray(s.exerciseSessions) ? s.exerciseSessions : [];
-    const runs = Array.isArray(s.runningSessions) ? s.runningSessions : [];
     const routes = getRoutes(s);
     const sleepMinutes = n(s.sleepMinutes);
     const avgSleep = sleeps.length ? Math.round(sleepMinutes / sleeps.length) : 0;
@@ -155,7 +154,7 @@
         ${metricCard('bi-person-walking','Passi', n(s.steps).toLocaleString('it-IT'), `${s.lookbackDays || '—'} giorni`)}
         ${metricCard('bi-speedometer2','Peso', s.weightKg != null ? `${n(s.weightKg).toFixed(1)} kg` : '—', s.weightKg != null ? `Aggiornato ${fmtDate(s.importedAt)}` : '')}
         ${metricCard('bi-moon-stars','Sonno', fmtHours(sleepMinutes), `${s.sleepCount || 0} sessioni · media ${fmtHours(avgSleep)}`)}
-        ${metricCard('bi-heart-pulse','Frequenza', hrAvg ? `${hrAvg} bpm` : '—', hrValues.length ? `${hrMin}–${hrMax} bpm · ${s.heartRateSampleCount || hrValues.length} campioni` : 'Nessun campione`)}
+        ${metricCard('bi-heart-pulse','Frequenza', hrAvg ? `${hrAvg} bpm` : '—', hrValues.length ? `${hrMin}–${hrMax} bpm · ${s.heartRateSampleCount || hrValues.length} campioni` : 'Nessun campione')}
       </div>
       <div class="row g-3">
         <div class="col-12 col-xl-6"><div class="hts-hc-section"><div class="hts-hc-section-title"><i class="bi bi-moon-stars me-2"></i>Sonno</div>${listRows(sleeps.slice(-6).reverse(), x => `<div class="hts-hc-list-row"><div><strong>${fmtDate(x.start)}</strong><small>${fmtDateTime(x.start)} → ${fmtDateTime(x.end)}</small></div><span>${fmtHours(x.durationMinutes)}</span></div>${renderSleepStages(x)}`, 'Nessuna sessione del sonno disponibile.')}</div></div>
