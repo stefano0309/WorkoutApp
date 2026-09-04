@@ -35,6 +35,8 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.reflect.KClass
 
+internal object HealthConnectCacheLock
+
 class HealthConnectBridge(private val activity: Activity) {
     companion object {
         private const val PREFS = "health_connect_cache"
@@ -45,11 +47,12 @@ class HealthConnectBridge(private val activity: Activity) {
         private const val ROUTE_REQUEST = 7402
         private const val MAX_LOOKBACK_DAYS = 365
         private const val PAGE_SIZE = 5000
+        private const val MAX_CACHED_ROUTES = 50
         private const val PROVIDER = "com.google.android.apps.healthdata"
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var pendingRouteSessionId: String? = null
+    @Volatile private var pendingRouteSessionId: String? = null
     @Volatile private var destroyed = false
 
     private val permissions = setOf(
@@ -84,7 +87,9 @@ class HealthConnectBridge(private val activity: Activity) {
     }
 
     @JavascriptInterface
-    fun readHealthSummary(): String? = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(SUMMARY_KEY, null)
+    fun readHealthSummary(): String? = synchronized(HealthConnectCacheLock) {
+        activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(SUMMARY_KEY, null)
+    }
 
     @JavascriptInterface
     fun getHealthCapabilities(): String {
@@ -263,13 +268,19 @@ class HealthConnectBridge(private val activity: Activity) {
             saveError("route_unavailable", statusMessage())
             return
         }
-        pendingRouteSessionId = sessionId.trim()
+        synchronized(this) {
+            if (pendingRouteSessionId != null) {
+                saveError("route_request_in_progress", "Una richiesta ExerciseRoute è già in corso.")
+                return
+            }
+            pendingRouteSessionId = sessionId.trim()
+        }
         runOnMain {
             try {
-                val intent = ExerciseRouteRequestContract().createIntent(activity, pendingRouteSessionId!!)
+                val intent = ExerciseRouteRequestContract().createIntent(activity, sessionId.trim())
                 activity.startActivityForResult(intent, ROUTE_REQUEST)
             } catch (t: Throwable) {
-                pendingRouteSessionId = null
+                synchronized(this) { pendingRouteSessionId = null }
                 saveError("route_request_failed", t.toString())
             }
         }
@@ -286,9 +297,11 @@ class HealthConnectBridge(private val activity: Activity) {
             return
         }
         if (requestCode != ROUTE_REQUEST) return
-        val sessionId = pendingRouteSessionId
-        pendingRouteSessionId = null
-        if (sessionId == null) return
+        val sessionId = synchronized(this) {
+            val current = pendingRouteSessionId
+            pendingRouteSessionId = null
+            current
+        } ?: return
         runCatching {
             val route = ExerciseRouteRequestContract().parseResult(resultCode, data)
             if (route == null) {
@@ -372,35 +385,41 @@ class HealthConnectBridge(private val activity: Activity) {
         else -> "type_$type"
     }
 
-    private fun cachedSummary(): JSONObject {
+    private fun cachedSummary(): JSONObject = synchronized(HealthConnectCacheLock) {
         val raw = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(SUMMARY_KEY, null)
-        return runCatching { if (raw.isNullOrBlank()) JSONObject() else JSONObject(raw) }.getOrDefault(JSONObject())
+        runCatching { if (raw.isNullOrBlank()) JSONObject() else JSONObject(raw) }.getOrDefault(JSONObject())
     }
 
-    private fun cacheRoute(id: String, route: JSONObject) {
+    private fun cacheRoute(id: String, route: JSONObject) = synchronized(HealthConnectCacheLock) {
         runCatching {
             val prefs = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val raw = prefs.getString(ROUTES_KEY, null)
             val routes = if (raw.isNullOrBlank()) JSONObject() else JSONObject(raw)
             routes.put(id, route)
+            while (routes.length() > MAX_CACHED_ROUTES) {
+                val oldest = routes.keys().asSequence().firstOrNull() ?: break
+                routes.remove(oldest)
+            }
             prefs.edit().putString(ROUTES_KEY, routes.toString()).apply()
         }.onFailure { saveError("route_cache_failed", it.toString()) }
     }
 
     @JavascriptInterface
-    fun readExerciseRoute(sessionId: String?): String? {
-        if (sessionId.isNullOrBlank()) return null
-        return runCatching {
-            val raw = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(ROUTES_KEY, null) ?: return null
+    fun readExerciseRoute(sessionId: String?): String? = synchronized(HealthConnectCacheLock) {
+        if (sessionId.isNullOrBlank()) return@synchronized null
+        runCatching {
+            val raw = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(ROUTES_KEY, null) ?: return@synchronized null
             JSONObject(raw).optJSONObject(sessionId)?.toString()
         }.getOrNull()
     }
 
     @JavascriptInterface
-    fun readLastError(): String? = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(ERROR_KEY, null)
+    fun readLastError(): String? = synchronized(HealthConnectCacheLock) {
+        activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(ERROR_KEY, null)
+    }
 
-    private fun persistAndDispatch(result: JSONObject) {
-        if (destroyed) return
+    private fun persistAndDispatch(result: JSONObject) = synchronized(HealthConnectCacheLock) {
+        if (destroyed) return@synchronized
         activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString(SUMMARY_KEY, result.toString())
             .remove(ERROR_KEY)
@@ -412,9 +431,11 @@ class HealthConnectBridge(private val activity: Activity) {
         val error = runCatching {
             JSONObject().put("code", code).put("message", message).put("timestamp", Instant.now().toString())
         }.getOrDefault(JSONObject())
-        activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(ERROR_KEY, error.toString())
-            .apply()
+        synchronized(HealthConnectCacheLock) {
+            activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString(ERROR_KEY, error.toString())
+                .apply()
+        }
         dispatchToWebView("health-connect-error", error)
     }
 
@@ -465,7 +486,7 @@ class HealthConnectBridge(private val activity: Activity) {
 
     fun destroy() {
         destroyed = true
-        pendingRouteSessionId = null
+        synchronized(this) { pendingRouteSessionId = null }
         scope.cancel()
     }
 }

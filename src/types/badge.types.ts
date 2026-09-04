@@ -1,7 +1,8 @@
 export type BadgeConditionContext = {
   totalRunKm: number;
   consecutiveStepDays: number;
-  weeklyWorkoutCount: number;
+  /** Number of completed workouts in each of the last four calendar weeks, oldest first. */
+  weeklyWorkoutCounts: number[];
   totalWorkoutCount: number;
 };
 
