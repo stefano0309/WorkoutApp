@@ -28,9 +28,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        if (Build.VERSION.SDK_INT >= 34) {
-            healthBridge = new HealthConnectBridge(this);
-        }
+        healthBridge = new HealthConnectBridge(this);
         installWidgetBridge();
         WeeklyPhotoReceiver.schedule(this);
         NotificationHelper.ensureChannels(this);
@@ -47,6 +45,10 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override public void onDestroy() {
+        if (healthBridge != null) {
+            healthBridge.destroy();
+            healthBridge = null;
+        }
         if (installedWebView != null) {
             installedWebView.removeJavascriptInterface("AndroidWidgetBridge");
             installedWebView.removeJavascriptInterface("AndroidHealthBridge");
