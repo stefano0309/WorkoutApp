@@ -25,12 +25,14 @@ public class MainActivity extends BridgeActivity {
 
     private final WidgetJavascriptBridge widgetBridge = new WidgetJavascriptBridge();
     private HealthConnectBridge healthBridge;
+    private HeartRateHealthConnectBridge heartRateBridge;
     private WebView installedWebView;
     private boolean widgetBridgeInstalled;
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         healthBridge = new HealthConnectBridge(this);
+        heartRateBridge = new HeartRateHealthConnectBridge(this);
         installWidgetBridge();
         WeeklyPhotoReceiver.schedule(this);
         NotificationHelper.ensureChannels(this);
@@ -52,9 +54,14 @@ public class MainActivity extends BridgeActivity {
             healthBridge.destroy();
             healthBridge = null;
         }
+        if (heartRateBridge != null) {
+            heartRateBridge.destroy();
+            heartRateBridge = null;
+        }
         if (installedWebView != null) {
             installedWebView.removeJavascriptInterface("AndroidWidgetBridge");
             installedWebView.removeJavascriptInterface("AndroidHealthBridge");
+            installedWebView.removeJavascriptInterface("AndroidHeartRateBridge");
             installedWebView = null;
         }
         widgetBridgeInstalled = false;
@@ -92,6 +99,9 @@ public class MainActivity extends BridgeActivity {
             webView.addJavascriptInterface(widgetBridge, "AndroidWidgetBridge");
             if (healthBridge != null) {
                 webView.addJavascriptInterface(healthBridge, "AndroidHealthBridge");
+            }
+            if (heartRateBridge != null) {
+                webView.addJavascriptInterface(heartRateBridge, "AndroidHeartRateBridge");
             }
             installedWebView = webView;
             widgetBridgeInstalled = true;
