@@ -19,6 +19,8 @@ import android.os.Build;
 import android.os.Parcelable;
 import android.webkit.JavascriptInterface;
 
+import androidx.core.app.ActivityCompat;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -35,7 +37,18 @@ public final class HealthConnectBridge {
     private static final String PREFS = "health_connect_cache";
     private static final String SUMMARY_KEY = "summary";
     private static final int ROUTE_REQUEST = 7402;
+    public static final int HEALTH_PERMISSION_REQUEST = 7403;
     private static final long DEFAULT_LOOKBACK_DAYS = 30;
+
+    /** Must match the android.permission.health.* entries declared in AndroidManifest.xml. */
+    private static final String[] HEALTH_PERMISSIONS = {
+        "android.permission.health.READ_WEIGHT",
+        "android.permission.health.READ_STEPS",
+        "android.permission.health.READ_SLEEP",
+        "android.permission.health.READ_EXERCISE",
+        "android.permission.health.READ_EXERCISE_ROUTES",
+        "android.permission.health.READ_HEART_RATE",
+    };
 
     private final Activity activity;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -43,6 +56,16 @@ public final class HealthConnectBridge {
 
     public HealthConnectBridge(Activity activity) { this.activity = activity; }
 
+    /**
+     * Triggers the real OS permission dialog for the android.permission.health.* set.
+     * On Android 14+ these are ordinary dangerous runtime permissions handled by
+     * ActivityCompat.requestPermissions, exactly like camera/location/notifications.
+     * The previous implementation only deep-linked into the Health Connect app's
+     * "manage permissions" screen (MANAGE_HEALTH_PERMISSIONS), which has nothing to
+     * show unless the OS already has a pending grant request for this app - so no
+     * dialog ever appeared. This method is the actual "ask" step; the result comes
+     * back in MainActivity#onRequestPermissionsResult -> handlePermissionsResult().
+     */
     @JavascriptInterface
     public void requestHealthPermissions() {
         if (Build.VERSION.SDK_INT < 34) {
@@ -51,13 +74,46 @@ public final class HealthConnectBridge {
         }
         activity.runOnUiThread(() -> {
             try {
-                Intent intent = new Intent("android.health.connect.action.MANAGE_HEALTH_PERMISSIONS");
-                intent.putExtra(Intent.EXTRA_PACKAGE_NAME, activity.getPackageName());
-                activity.startActivity(intent);
+                List<String> missing = new ArrayList<>();
+                for (String permission : HEALTH_PERMISSIONS) {
+                    if (activity.checkSelfPermission(permission) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                        missing.add(permission);
+                    }
+                }
+                if (missing.isEmpty()) {
+                    // Already granted: nothing to prompt, just refresh the data.
+                    syncHealthConnect(DEFAULT_LOOKBACK_DAYS);
+                    return;
+                }
+                ActivityCompat.requestPermissions(activity, missing.toArray(new String[0]), HEALTH_PERMISSION_REQUEST);
             } catch (Throwable e) {
-                saveError("permission_screen_failed", e.toString());
+                saveError("permission_request_failed", e.toString());
             }
         });
+    }
+
+    /**
+     * Call from MainActivity#onRequestPermissionsResult when requestCode == HEALTH_PERMISSION_REQUEST.
+     * Notifies the WebView of the outcome and, if at least one permission was granted,
+     * kicks off a sync so the UI/widget populate immediately instead of waiting for the
+     * next scheduled sync.
+     */
+    public void handlePermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        if (requestCode != HEALTH_PERMISSION_REQUEST) return;
+        boolean anyGranted = false;
+        JSONObject result = new JSONObject();
+        JSONObject granted = new JSONObject();
+        try {
+            for (int i = 0; i < permissions.length && i < grantResults.length; i++) {
+                boolean ok = grantResults[i] == android.content.pm.PackageManager.PERMISSION_GRANTED;
+                granted.put(permissions[i], ok);
+                if (ok) anyGranted = true;
+            }
+            result.put("granted", granted);
+            result.put("anyGranted", anyGranted);
+        } catch (Throwable ignored) { }
+        dispatchToWebView("health-connect-permissions-result", result);
+        if (anyGranted) syncHealthConnect(DEFAULT_LOOKBACK_DAYS);
     }
 
     @JavascriptInterface
@@ -380,6 +436,16 @@ public final class HealthConnectBridge {
         activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putString(SUMMARY_KEY, result.toString()).apply();
         dispatchToWebView("health-connect-sync", result);
+        // The widget only auto-refreshes every 30 min (updatePeriodMillis in
+        // widget_training_today_info.xml); without this call the home-screen
+        // widget keeps showing "Salute · —" long after a successful sync.
+        refreshWidgetSafely();
+    }
+
+    private void refreshWidgetSafely() {
+        try {
+            HybridTrainingWidgetProvider.updateAllWidgets(activity);
+        } catch (Throwable ignored) { }
     }
 
     private void upsertRouteIntoCache(String sessionId, JSONObject routeJson) {

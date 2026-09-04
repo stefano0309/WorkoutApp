@@ -40,6 +40,11 @@ public class MainActivity extends BridgeActivity {
         if (healthBridge != null) healthBridge.handleActivityResult(requestCode, resultCode, data);
     }
 
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (healthBridge != null) healthBridge.handlePermissionsResult(requestCode, permissions, grantResults);
+    }
+
     private void installWidgetBridge() {
         final WebView webView = getBridge().getWebView();
         if (webView == null) { HANDLER.postDelayed(this::installWidgetBridge, 500); return; }
