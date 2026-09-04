@@ -1,9 +1,10 @@
 (() => {
   'use strict';
-  if (window.__HTS_HEALTH_CONNECT_V3__) return;
-  window.__HTS_HEALTH_CONNECT_V3__ = true;
+  if (window.__HTS_HEALTH_CONNECT_V4__) return;
+  window.__HTS_HEALTH_CONNECT_V4__ = true;
 
   const STATE_KEY = 'hybridTrainingSystem';
+  const SYNC_TIMEOUT_MS = 30_000;
   const readState = () => {
     try { return JSON.parse(localStorage.getItem(STATE_KEY) || '{}'); } catch (_) { return {}; }
   };
@@ -86,21 +87,75 @@
     } catch (_) { return null; }
   };
 
+  let activeSyncPromise = null;
+
   const sync = (days = 30) => {
-    try {
+    if (activeSyncPromise) return activeSyncPromise;
+
+    activeSyncPromise = new Promise((resolve, reject) => {
       const rangeDays = Number(days) || 30;
-      let requested = false;
-      if (window.AndroidHealthBridge) {
-        window.AndroidHealthBridge.syncHealthConnectDays(rangeDays);
-        requested = true;
+      const hasHealthBridge = Boolean(window.AndroidHealthBridge);
+      const hasHeartRateBridge = Boolean(window.AndroidHeartRateBridge);
+      if (!hasHealthBridge && !hasHeartRateBridge) {
+        activeSyncPromise = null;
+        resolve({ requested: false, healthConnect: false, heartRate: false });
+        return;
       }
-      if (window.AndroidHeartRateBridge) {
-        window.AndroidHeartRateBridge.syncHeartRate(rangeDays);
-        requested = true;
+
+      let healthDone = !hasHealthBridge;
+      let heartRateDone = !hasHeartRateBridge;
+      let settled = false;
+      let finish;
+
+      const timer = setTimeout(() => finish(new Error('health-connect-sync-timeout')), SYNC_TIMEOUT_MS);
+      const cleanup = () => {
+        clearTimeout(timer);
+        window.removeEventListener('health-connect-sync', onHealthSync);
+        window.removeEventListener('health-connect-heart-rate', onHeartRateSync);
+        window.removeEventListener('health-connect-error', onError);
+        activeSyncPromise = null;
+      };
+
+      finish = (error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (error) reject(error);
+        else resolve({ requested: true, healthConnect: hasHealthBridge, heartRate: hasHeartRateBridge });
+      };
+
+      const checkDone = () => {
+        if (healthDone && heartRateDone) finish();
+      };
+      const onHealthSync = (event) => {
+        mergeSummary(event.detail);
+        healthDone = true;
+        checkDone();
+      };
+      const onHeartRateSync = (event) => {
+        mergeSummary(event.detail);
+        heartRateDone = true;
+        checkDone();
+      };
+      const onError = (event) => {
+        const code = event.detail?.code || event.detail?.message || 'health-connect-sync-failed';
+        finish(new Error(String(code)));
+      };
+
+      window.addEventListener('health-connect-sync', onHealthSync);
+      window.addEventListener('health-connect-heart-rate', onHeartRateSync);
+      window.addEventListener('health-connect-error', onError);
+
+      try {
+        if (hasHealthBridge) window.AndroidHealthBridge.syncHealthConnectDays(rangeDays);
+        if (hasHeartRateBridge) window.AndroidHeartRateBridge.syncHeartRate(rangeDays);
+      } catch (error) {
+        finish(error);
       }
-      return requested;
-    } catch (_) {}
-    return false;
+      checkDone();
+    });
+
+    return activeSyncPromise;
   };
 
   const requestPermissions = () => {
@@ -153,7 +208,7 @@
 
   const boot = () => {
     readNativeSummary();
-    setTimeout(() => sync(30), 600);
+    sync(30).catch(() => {});
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
   else boot();
