@@ -1,7 +1,9 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "com.stefano.workout"
+    // Keep the Java package and Android namespace aligned. This is required by
+    // the manifest's relative component names (.MainActivity, .Receiver, etc.).
+    namespace = "com.example.app"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
         applicationId "com.stefano.workout"
