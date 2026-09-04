@@ -35,11 +35,6 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.reflect.KClass
 
-/**
- * Cross-version Health Connect bridge.
- * Uses AndroidX Health Connect 1.1.0, which talks to the framework provider on
- * Android 14+ and the standalone Health Connect provider on Android 9-13.
- */
 class HealthConnectBridge(private val activity: Activity) {
     companion object {
         private const val PREFS = "health_connect_cache"
@@ -67,11 +62,9 @@ class HealthConnectBridge(private val activity: Activity) {
 
     private fun status(): Int = HealthConnectClient.getSdkStatus(activity, PROVIDER)
 
-    private fun client(): HealthConnectClient? {
-        return when (status()) {
-            HealthConnectClient.SDK_AVAILABLE -> HealthConnectClient.getOrCreate(activity, PROVIDER)
-            else -> null
-        }
+    private fun client(): HealthConnectClient? = when (status()) {
+        HealthConnectClient.SDK_AVAILABLE -> HealthConnectClient.getOrCreate(activity, PROVIDER)
+        else -> null
     }
 
     @JavascriptInterface
@@ -216,7 +209,7 @@ class HealthConnectBridge(private val activity: Activity) {
                             .put("start", stage.startTime.toString())
                             .put("end", stage.endTime.toString())
                             .put("durationMinutes", Duration.between(stage.startTime, stage.endTime).toMinutes())
-                            .put("type", stage.type),
+                            .put("type", stage.stage),
                     )
                 }
                 item.put("stages", stages)
@@ -284,8 +277,10 @@ class HealthConnectBridge(private val activity: Activity) {
 
     fun handleActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (requestCode == PERMISSION_REQUEST) {
-            val granted = runCatching { HealthPermissionsRequestContract(PROVIDER).parseResult(resultCode, data) }.getOrDefault(emptySet())
-            val payload = JSONObject().put("grantedCount", granted.size).put("granted", JSONArray(granted.toList()))
+            val granted = runCatching {
+                HealthPermissionsRequestContract(PROVIDER).parseResult(resultCode, data)
+            }.getOrDefault(emptySet())
+            val payload = JSONObject().put("grantedCount", granted.size)
             dispatchToWebView("health-connect-permissions", payload)
             if (granted.isNotEmpty()) syncHealthConnectDays(30)
             return
@@ -299,7 +294,9 @@ class HealthConnectBridge(private val activity: Activity) {
             if (route == null) {
                 saveError("route_empty", "Nessun percorso condiviso.")
             } else {
-                val json = serializeRoute(route).put("sessionId", sessionId).put("receivedAt", Instant.now().toString())
+                val json = serializeRoute(route)
+                    .put("sessionId", sessionId)
+                    .put("receivedAt", Instant.now().toString())
                 cacheRoute(sessionId, json)
                 dispatchToWebView("health-connect-route", json)
             }
@@ -308,7 +305,7 @@ class HealthConnectBridge(private val activity: Activity) {
 
     private fun serializeRoute(route: androidx.health.connect.client.records.ExerciseRoute): JSONObject {
         val points = JSONArray()
-        route.locations.forEach { location ->
+        route.route.forEach { location ->
             points.put(
                 JSONObject()
                     .put("time", location.time.toString())
@@ -323,14 +320,14 @@ class HealthConnectBridge(private val activity: Activity) {
         }
         return JSONObject()
             .put("points", points)
-            .put("pointCount", route.locations.size)
+            .put("pointCount", route.route.size)
             .put("distanceKm", calculateDistanceKm(route))
             .put("elevationGainM", calculateElevationGain(route))
     }
 
     private fun calculateDistanceKm(route: androidx.health.connect.client.records.ExerciseRoute): Double {
         var meters = 0.0
-        val p = route.locations
+        val p = route.route
         for (i in 1 until p.size) {
             val a = p[i - 1]
             val b = p[i]
@@ -342,7 +339,7 @@ class HealthConnectBridge(private val activity: Activity) {
     private fun calculateElevationGain(route: androidx.health.connect.client.records.ExerciseRoute): Double {
         var gain = 0.0
         var previous: Double? = null
-        route.locations.forEach {
+        route.route.forEach {
             val altitude = it.altitude?.inMeters ?: return@forEach
             if (previous != null && altitude > previous!!) gain += altitude - previous!!
             previous = altitude
@@ -404,7 +401,10 @@ class HealthConnectBridge(private val activity: Activity) {
 
     private fun persistAndDispatch(result: JSONObject) {
         if (destroyed) return
-        activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(SUMMARY_KEY, result.toString()).remove(ERROR_KEY).apply()
+        activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(SUMMARY_KEY, result.toString())
+            .remove(ERROR_KEY)
+            .apply()
         dispatchToWebView("health-connect-sync", result)
     }
 
@@ -412,7 +412,9 @@ class HealthConnectBridge(private val activity: Activity) {
         val error = runCatching {
             JSONObject().put("code", code).put("message", message).put("timestamp", Instant.now().toString())
         }.getOrDefault(JSONObject())
-        activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(ERROR_KEY, error.toString()).apply()
+        activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(ERROR_KEY, error.toString())
+            .apply()
         dispatchToWebView("health-connect-error", error)
     }
 
