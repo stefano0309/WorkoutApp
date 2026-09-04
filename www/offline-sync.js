@@ -21,7 +21,7 @@
       const script = document.createElement('script');
       script.src = 'storage-repository.js';
       script.async = false;
-      script.dataset.htsStorageRepository = 'true';
+      script.setAttribute('data-hts-storage-repository', 'true');
       script.addEventListener('load', () => window.HTSStorage ? resolve(window.HTSStorage) : reject(new Error('storage-repository-unavailable')), { once: true });
       script.addEventListener('error', () => reject(new Error('storage-repository-load-failed')), { once: true });
       document.head.appendChild(script);
@@ -56,48 +56,69 @@
     return item;
   };
   const time = (value) => { const n = Date.parse(value || ''); return Number.isFinite(n) ? n : 0; };
+
   const collectionKey = (item, fallbackIndex) => {
     if (!item || typeof item !== 'object') return `index:${fallbackIndex}`;
     return item.id || item.healthConnectSessionId || item.sessionId || item.date || `${JSON.stringify(item)}:${fallbackIndex}`;
   };
+
   const mergeCollection = (localItems, remoteItems) => {
     const merged = new Map();
     for (const [index, item] of localItems.entries()) merged.set(collectionKey(item, index), item);
     for (const [index, item] of remoteItems.entries()) {
       const key = collectionKey(item, index);
       const existing = merged.get(key);
-      if (!existing) { merged.set(key, item); continue; }
+      if (!existing) {
+        merged.set(key, item);
+        continue;
+      }
       const existingAt = time(existing?.updatedAt || existing?.timestamp || existing?.at || existing?.date);
       const remoteAt = time(item?.updatedAt || item?.timestamp || item?.at || item?.date);
       merged.set(key, remoteAt >= existingAt ? item : existing);
     }
     return Array.from(merged.values());
   };
+
   const mergeState = (localState, remoteState) => {
     const local = stamp(localState || {});
     const remote = stamp(remoteState || {});
     const localAt = time(local.lastSavedAt);
     const remoteAt = time(remote.lastSavedAt);
     const newest = remoteAt >= localAt ? remote : local;
+
     const merged = {
-      ...local, ...remote, ...newest,
+      ...local,
+      ...remote,
+      ...newest,
       account: { ...(local.account || {}), ...(remote.account || {}) },
       health: { ...(local.health || {}), ...(remote.health || {}) },
       settings: { ...(local.settings || {}), ...(remote.settings || {}) },
       profile: { ...(local.profile || {}), ...(remote.profile || {}) },
       assessment: { ...(local.assessment || {}), ...(remote.assessment || {}) },
-      metrics: mergeCollection(Array.isArray(local.metrics) ? local.metrics : [], Array.isArray(remote.metrics) ? remote.metrics : []),
-      log: mergeCollection(Array.isArray(local.log) ? local.log : [], Array.isArray(remote.log) ? remote.log : []),
+      metrics: mergeCollection(
+        Array.isArray(local.metrics) ? local.metrics : [],
+        Array.isArray(remote.metrics) ? remote.metrics : [],
+      ),
+      log: mergeCollection(
+        Array.isArray(local.log) ? local.log : [],
+        Array.isArray(remote.log) ? remote.log : [],
+      ),
       _storageVersion: Math.max(Number(local._storageVersion || 2), Number(remote._storageVersion || 2)),
       lastSavedAt: newest.lastSavedAt || new Date().toISOString(),
     };
-    merged.health.routes = mergeCollection(Array.isArray(local.health?.routes) ? local.health.routes : [], Array.isArray(remote.health?.routes) ? remote.health.routes : []);
+
+    merged.health.routes = mergeCollection(
+      Array.isArray(local.health?.routes) ? local.health.routes : [],
+      Array.isArray(remote.health?.routes) ? remote.health.routes : [],
+    );
+
     return merged;
   };
 
   let firebaseApi = null;
   let timer = null;
   let busy = false;
+
   async function ensureFirebaseApi() {
     if (firebaseApi) return firebaseApi;
     const [{ getApp }, { getAuth }, { getDatabase, ref, get, update }] = await Promise.all([
@@ -108,6 +129,7 @@
     firebaseApi = { getApp, getAuth, getDatabase, ref, get, update };
     return firebaseApi;
   }
+
   async function remoteRead(uid) {
     const api = await ensureFirebaseApi();
     const auth = api.getAuth(api.getApp());
@@ -116,6 +138,7 @@
     const snap = await api.get(api.ref(db, 'users/' + uid + '/offlineStateV1'));
     return snap.exists() ? snap.val() : null;
   }
+
   async function remoteWrite(uid, envelope) {
     const api = await ensureFirebaseApi();
     const auth = api.getAuth(api.getApp());
@@ -123,14 +146,17 @@
     const db = api.getDatabase(api.getApp());
     return api.update(api.ref(db, 'users/' + uid), { offlineStateV1: envelope });
   }
+
   function applyRemote(remoteState) {
     if (!remoteState) return false;
-    const next = mergeState(readState() || {}, remoteState);
+    const local = readState() || {};
+    const next = mergeState(local, remoteState);
     window.HTSStorage.write(STATE_KEY, next);
     setMeta({ lastRemoteAt: next.lastSavedAt || new Date().toISOString() });
     window.dispatchEvent(new CustomEvent('offline-sync-applied', { detail: next }));
     return true;
   }
+
   async function reconcile() {
     if (busy || !navigator.onLine) return;
     const uid = getUid();
@@ -141,6 +167,7 @@
       const pending = queue();
       const remote = await remoteRead(uid);
       const remoteState = remote?.state || null;
+
       if (!remoteState) {
         const source = pending?.state ? stamp(pending.state) : local;
         const envelope = { schema: 2, deviceId: getDeviceId(), updatedAt: source.lastSavedAt || new Date().toISOString(), state: source };
@@ -160,29 +187,47 @@
       const local = readState();
       if (local) enqueue(local);
       window.dispatchEvent(new CustomEvent('offline-sync-status', { detail: { online: navigator.onLine, synced: false, pending: true, error: String(error) } }));
-    } finally { busy = false; }
+    } finally {
+      busy = false;
+    }
   }
+
   function schedule() {
     clearTimeout(timer);
     const state = readState();
     if (state?.account?.uid) enqueue(state);
     timer = setTimeout(reconcile, DEBOUNCE_MS);
   }
+
   function patchStorage() {
-    window.HTSStorage.observe(STATE_KEY, schedule);
+    window.HTSStorage.observe(STATE_KEY, () => {
+      if (!busy) schedule();
+    });
   }
+
   function unifyLegacyCloudSync() {
     const cloudSync = window.CloudSync;
     if (!cloudSync || cloudSync.__offlineFirstUnified) return;
+
     cloudSync.__offlineFirstUnified = true;
     const legacyUpload = cloudSync.upload;
     const legacyScheduleUpload = cloudSync.scheduleUpload;
-    cloudSync.scheduleUpload = () => schedule();
+
+    cloudSync.scheduleUpload = () => {
+      schedule();
+    };
     cloudSync.upload = () => reconcile();
+
     if (typeof cloudSync.download === 'function') cloudSync.download = () => reconcile();
     if (typeof cloudSync.startWatch === 'function') cloudSync.startWatch = () => {};
-    if (legacyUpload && legacyScheduleUpload) window.dispatchEvent(new CustomEvent('offline-sync-legacy-disabled', { detail: { upload: true, scheduleUpload: true } }));
+
+    if (legacyUpload && legacyScheduleUpload) {
+      window.dispatchEvent(new CustomEvent('offline-sync-legacy-disabled', {
+        detail: { upload: true, scheduleUpload: true },
+      }));
+    }
   }
+
   async function boot() {
     await ensureStorage();
     patchStorage();
@@ -194,12 +239,22 @@
       window.dispatchEvent(new CustomEvent('offline-sync-status', { detail: { online: false, synced: false, pending: true } }));
     });
     window.addEventListener('offline-sync-request', reconcile);
-    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reconcile(); });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') reconcile();
+    });
     window.addEventListener('pageshow', reconcile);
     if (getUid()) reconcile();
-    window.OfflineFirstSync = { sync: reconcile, schedule, pending: () => !!queue(), deviceId: getDeviceId, merge: mergeState, status: () => ({ online: navigator.onLine, pending: !!queue(), uid: getUid(), meta: meta() }) };
+    window.OfflineFirstSync = {
+      sync: reconcile,
+      schedule,
+      pending: () => !!queue(),
+      deviceId: getDeviceId,
+      merge: mergeState,
+      status: () => ({ online: navigator.onLine, pending: !!queue(), uid: getUid(), meta: meta() }),
+    };
     unifyLegacyCloudSync();
   }
+
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
   else boot();
 })();
