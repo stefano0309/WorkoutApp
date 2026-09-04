@@ -61,13 +61,14 @@ class HeartRateHealthConnectBridge(private val activity: Activity) {
                 } while (!token.isNullOrEmpty())
 
                 val recentCutoff = end.minus(Duration.ofHours(CACHED_SAMPLE_WINDOW_HOURS))
-                val samples = JSONArray()
                 val recentSamples = responseRecords
                     .asSequence()
-                    .flatMap { it.samples.asSequence() }
-                    .filter { it.time >= recentCutoff }
-                    .takeLast(MAX_CACHED_SAMPLES)
+                    .flatMap { record -> record.samples.asSequence() }
+                    .filter { sample -> sample.time >= recentCutoff }
                     .toList()
+                    .takeLast(MAX_CACHED_SAMPLES)
+
+                val samples = JSONArray()
                 var min = Long.MAX_VALUE
                 var max = Long.MIN_VALUE
                 var sum = 0L
@@ -81,14 +82,21 @@ class HeartRateHealthConnectBridge(private val activity: Activity) {
                         count++
                     }
                 }
+
                 recentSamples.forEach { sample ->
-                    samples.put(JSONObject().put("time", sample.time.toString()).put("bpm", sample.beatsPerMinute))
+                    samples.put(
+                        JSONObject()
+                            .put("time", sample.time.toString())
+                            .put("bpm", sample.beatsPerMinute),
+                    )
                 }
 
                 val prefs = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 synchronized(HealthConnectCacheLock) {
                     val raw = prefs.getString(SUMMARY_KEY, null)
-                    val summary = runCatching { if (raw.isNullOrBlank()) JSONObject() else JSONObject(raw) }.getOrDefault(JSONObject())
+                    val summary = runCatching {
+                        if (raw.isNullOrBlank()) JSONObject() else JSONObject(raw)
+                    }.getOrDefault(JSONObject())
                     summary.put("heartRateSamples", samples)
                     summary.put("heartRateSampleCount", count)
                     summary.put("heartRateCachedSampleCount", recentSamples.size)
@@ -106,9 +114,14 @@ class HeartRateHealthConnectBridge(private val activity: Activity) {
                     dispatch("health-connect-heart-rate", summary)
                 }
             } catch (t: Throwable) {
-                val error = JSONObject().put("code", if (t is SecurityException) "permission_denied" else "heart_rate_read_failed").put("message", t.toString())
+                val error = JSONObject()
+                    .put("code", if (t is SecurityException) "permission_denied" else "heart_rate_read_failed")
+                    .put("message", t.toString())
                 synchronized(HealthConnectCacheLock) {
-                    activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(ERROR_KEY, error.toString()).apply()
+                    activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                        .edit()
+                        .putString(ERROR_KEY, error.toString())
+                        .apply()
                 }
                 dispatch("health-connect-error", error)
             }
