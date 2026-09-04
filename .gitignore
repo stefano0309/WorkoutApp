@@ -1,0 +1,21 @@
+node_modules/
+dist/
+.cache/
+.env
+.env.*
+!.env.example
+*.log
+
+# Android generated files
+android/.gradle/
+android/**/build/
+android/local.properties
+android/**/*.jks
+android/**/*.keystore
+android/app/google-services.json
+
+# Capacitor generated assets
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+android/app/src/main/res/xml/config.xml

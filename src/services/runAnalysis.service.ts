@@ -33,10 +33,12 @@ export function analyzeRun(samples: RunSample[], route: RoutePoint[] = []): RunA
   const last = ordered.length ? new Date(ordered[ordered.length - 1].timestamp).getTime() : 0;
   const durationSeconds = first && last ? Math.max(0, (last - first) / 1000) : 0;
   const distanceMeters = Math.max(...ordered.map((s) => Number(s.distanceMeters || 0)), 0);
-  const cadence = ordered.map((s) => Number(s.cadenceSpm || 0)).filter(Boolean);
+  const cadence = ordered.map((s) => Number(s.cadenceSpm || 0)).filter((value) => Number.isFinite(value) && value > 0);
 
   let elevationGainMeters = 0;
-  const elevations = route.map((p) => Number(p.elevation || 0));
+  const elevations = route
+    .map((p) => p.elevation)
+    .filter((elevation): elevation is number => elevation !== null && elevation !== undefined && Number.isFinite(elevation));
   for (let i = 1; i < elevations.length; i += 1) {
     const delta = elevations[i] - elevations[i - 1];
     if (delta > 0) elevationGainMeters += delta;
@@ -54,7 +56,7 @@ export function analyzeRun(samples: RunSample[], route: RoutePoint[] = []): RunA
     const hr = ordered
       .filter((s) => Number(s.distanceMeters || 0) > previous && Number(s.distanceMeters || 0) <= target)
       .map((s) => Number(s.heartRateBpm || 0))
-      .filter(Boolean);
+      .filter((value) => Number.isFinite(value) && value > 0);
     splits.push({
       km,
       paceMinPerKm: seconds > 0 ? seconds / 60 : null,
