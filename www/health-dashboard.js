@@ -136,7 +136,7 @@
   function patchRoute(){
     if(typeof window.route!=='function'||window.__HTS_HEALTH_ROUTE_PATCHED__)return;
     const original=window.route;
-    window.route=function(page,...args){if(page==='salute'){open();return;}close();return original.call(this,page,...args)};
+    window.route=function(page,...args){if(page==='salute'){open();return;}close();const result=original.call(this,page,...args);injectMenu();return result};
     window.__HTS_HEALTH_ROUTE_PATCHED__=true;
   }
   function open(){render();}
@@ -144,6 +144,6 @@
   window.addEventListener('health-connect-sync',()=>window.HealthDashboard.refresh());
   window.addEventListener('health-connect-heart-rate',()=>window.HealthDashboard.refresh());
   window.addEventListener('health-connect-route',()=>window.HealthDashboard.refresh());
-  const boot=()=>{injectMenu();patchRoute();const obs=new MutationObserver(()=>{injectMenu();patchRoute();});obs.observe(document.body,{subtree:true,childList:true});setTimeout(()=>{injectMenu();patchRoute();},800);};
+  const boot=()=>{injectMenu();patchRoute();};
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();
 })();
