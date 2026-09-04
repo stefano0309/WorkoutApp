@@ -1,7 +1,7 @@
 (() => {
   'use strict';
-  if (window.__HTS_HEALTH_CONNECT_V2__) return;
-  window.__HTS_HEALTH_CONNECT_V2__ = true;
+  if (window.__HTS_HEALTH_CONNECT_V3__) return;
+  window.__HTS_HEALTH_CONNECT_V3__ = true;
 
   const STATE_KEY = 'hybridTrainingSystem';
   const readState = () => {
@@ -88,10 +88,17 @@
 
   const sync = (days = 30) => {
     try {
+      const rangeDays = Number(days) || 30;
+      let requested = false;
       if (window.AndroidHealthBridge) {
-        window.AndroidHealthBridge.syncHealthConnectDays(Number(days));
-        return true;
+        window.AndroidHealthBridge.syncHealthConnectDays(rangeDays);
+        requested = true;
       }
+      if (window.AndroidHeartRateBridge) {
+        window.AndroidHeartRateBridge.syncHeartRate(rangeDays);
+        requested = true;
+      }
+      return requested;
     } catch (_) {}
     return false;
   };
@@ -119,10 +126,10 @@
   };
 
   window.addEventListener('health-connect-sync', (event) => mergeSummary(event.detail));
+  window.addEventListener('health-connect-heart-rate', (event) => mergeSummary(event.detail));
   window.addEventListener('health-connect-route', (event) => {
     const detail = event.detail || {};
     const state = normalizeState(readState());
-    state.health = state.health || {};
     state.health.routes = Array.isArray(state.health.routes) ? state.health.routes : [];
     const id = detail.sessionId;
     const existing = state.health.routes.findIndex((r) => r.sessionId === id);
@@ -130,7 +137,6 @@
     if (existing >= 0) state.health.routes[existing] = route;
     else state.health.routes.push(route);
 
-    // Attach the consented route to the already imported running log entry.
     const log = state.log.find((x) => x.healthConnectSessionId === id);
     if (log) {
       log.meta = {
@@ -145,7 +151,6 @@
     window.dispatchEvent(new CustomEvent('health-connect-state-updated', { detail: route }));
   });
 
-  // Read cached data immediately, then refresh from Health Connect once the bridge exists.
   const boot = () => {
     readNativeSummary();
     setTimeout(() => sync(30), 600);
