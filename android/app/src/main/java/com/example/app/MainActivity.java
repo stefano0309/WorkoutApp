@@ -25,7 +25,6 @@ public class MainActivity extends BridgeActivity {
     private HealthConnectBridge healthBridge;
     private WebView installedWebView;
     private boolean widgetBridgeInstalled;
-    private boolean nativeScriptsBootstrapped;
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -51,7 +50,9 @@ public class MainActivity extends BridgeActivity {
         if (installedWebView != null) {
             installedWebView.removeJavascriptInterface("AndroidWidgetBridge");
             installedWebView.removeJavascriptInterface("AndroidHealthBridge");
+            installedWebView = null;
         }
+        widgetBridgeInstalled = false;
         super.onDestroy();
     }
 
@@ -59,34 +60,28 @@ public class MainActivity extends BridgeActivity {
         final WebView webView = getBridge().getWebView();
         if (webView == null) return;
 
-        if (installedWebView == webView && widgetBridgeInstalled) {
-            syncWidgetState(webView);
-            return;
+        if (installedWebView != webView || !widgetBridgeInstalled) {
+            webView.getSettings().setJavaScriptEnabled(true);
+            webView.addJavascriptInterface(widgetBridge, "AndroidWidgetBridge");
+            if (healthBridge != null) {
+                webView.addJavascriptInterface(healthBridge, "AndroidHealthBridge");
+            }
+            installedWebView = webView;
+            widgetBridgeInstalled = true;
+            bootstrapNativeScripts(webView);
         }
-
-        webView.getSettings().setJavaScriptEnabled(true);
-        webView.addJavascriptInterface(widgetBridge, "AndroidWidgetBridge");
-        if (healthBridge != null) {
-            webView.addJavascriptInterface(healthBridge, "AndroidHealthBridge");
-        }
-
-        installedWebView = webView;
-        widgetBridgeInstalled = true;
-        bootstrapNativeScripts(webView);
         syncWidgetState(webView);
     }
 
     private void bootstrapNativeScripts(final WebView webView) {
-        if (nativeScriptsBootstrapped) return;
-        nativeScriptsBootstrapped = true;
-
         String script = "javascript:(function(){" +
-                "var files=['workout-ux.js','roadmap-features.js','health-connect.service.js','health-connect-ui.js','ui-consistency.js','offline-sync.js','native-auth.js'];" +
                 "window.__htsNativeScriptErrors=window.__htsNativeScriptErrors||[];" +
+                "var files=['workout-ux.js','roadmap-features.js','health-connect.service.js','health-connect-ui.js','ui-consistency.js','offline-sync.js','native-auth.js'];" +
                 "files.forEach(function(src){" +
-                "if(document.querySelector('script[data-hts-src=\\\"'+src+'\\\"]')||document.querySelector('script[src=\\\"'+src+'\\\"]'))return;" +
-                "var s=document.createElement('script');s.src=src;s.async=false;s.dataset.htsSrc=src;" +
-                "s.onerror=function(){window.__htsNativeScriptErrors.push(src);};" +
+                "if(document.querySelector('script[data-hts-src=\\\"'+src+'\\\"]'))return;" +
+                "var s=document.createElement('script');s.src=src;s.async=false;s.setAttribute('data-hts-src',src);" +
+                "s.onload=function(){s.setAttribute('data-hts-loaded','1');};" +
+                "s.onerror=function(){if(window.__htsNativeScriptErrors.indexOf(src)<0)window.__htsNativeScriptErrors.push(src);};" +
                 "document.head.appendChild(s);" +
                 "});" +
                 "})();";
@@ -102,7 +97,7 @@ public class MainActivity extends BridgeActivity {
                 "if(raw&&raw!==last&&window.AndroidWidgetBridge){window.AndroidWidgetBridge.sync(raw);last=raw;}" +
                 "}catch(e){}};" +
                 "window.__hybridWidgetBridgeSync();" +
-                "setInterval(window.__hybridWidgetBridgeSync,1000);" +
+                "window.__hybridWidgetBridgeTimer=window.__hybridWidgetBridgeTimer||setInterval(window.__hybridWidgetBridgeSync,1000);" +
                 "document.addEventListener('visibilitychange',window.__hybridWidgetBridgeSync);" +
                 "window.addEventListener('pageshow',window.__hybridWidgetBridgeSync);" +
                 "})();";
