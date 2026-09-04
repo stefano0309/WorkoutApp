@@ -1,7 +1,7 @@
 (() => {
   'use strict';
-  if (window.__HTS_OFFLINE_SYNC_V1__) return;
-  window.__HTS_OFFLINE_SYNC_V1__ = true;
+  if (window.__HTS_OFFLINE_SYNC_V2__) return;
+  window.__HTS_OFFLINE_SYNC_V2__ = true;
 
   const STATE_KEY = 'hybridTrainingSystem';
   const META_KEY = 'hts.offlineSync.meta.v1';
@@ -40,6 +40,64 @@
   };
   const time = (value) => { const n = Date.parse(value || ''); return Number.isFinite(n) ? n : 0; };
 
+  const collectionKey = (item, fallbackIndex) => {
+    if (!item || typeof item !== 'object') return `index:${fallbackIndex}`;
+    return item.id || item.healthConnectSessionId || item.sessionId || item.date || `${JSON.stringify(item)}:${fallbackIndex}`;
+  };
+
+  const mergeCollection = (localItems, remoteItems) => {
+    const merged = new Map();
+    for (const [index, item] of localItems.entries()) merged.set(collectionKey(item, index), item);
+    for (const [index, item] of remoteItems.entries()) {
+      const key = collectionKey(item, index);
+      const existing = merged.get(key);
+      if (!existing) {
+        merged.set(key, item);
+        continue;
+      }
+      const existingAt = time(existing?.updatedAt || existing?.timestamp || existing?.at || existing?.date);
+      const remoteAt = time(item?.updatedAt || item?.timestamp || item?.at || item?.date);
+      merged.set(key, remoteAt >= existingAt ? item : existing);
+    }
+    return Array.from(merged.values());
+  };
+
+  const mergeState = (localState, remoteState) => {
+    const local = stamp(localState || {});
+    const remote = stamp(remoteState || {});
+    const localAt = time(local.lastSavedAt);
+    const remoteAt = time(remote.lastSavedAt);
+    const newest = remoteAt >= localAt ? remote : local;
+
+    const merged = {
+      ...local,
+      ...remote,
+      ...newest,
+      account: { ...(local.account || {}), ...(remote.account || {}) },
+      health: { ...(local.health || {}), ...(remote.health || {}) },
+      settings: { ...(local.settings || {}), ...(remote.settings || {}) },
+      profile: { ...(local.profile || {}), ...(remote.profile || {}) },
+      assessment: { ...(local.assessment || {}), ...(remote.assessment || {}) },
+      metrics: mergeCollection(
+        Array.isArray(local.metrics) ? local.metrics : [],
+        Array.isArray(remote.metrics) ? remote.metrics : [],
+      ),
+      log: mergeCollection(
+        Array.isArray(local.log) ? local.log : [],
+        Array.isArray(remote.log) ? remote.log : [],
+      ),
+      _storageVersion: Math.max(Number(local._storageVersion || 2), Number(remote._storageVersion || 2)),
+      lastSavedAt: newest.lastSavedAt || new Date().toISOString(),
+    };
+
+    merged.health.routes = mergeCollection(
+      Array.isArray(local.health?.routes) ? local.health.routes : [],
+      Array.isArray(remote.health?.routes) ? remote.health.routes : [],
+    );
+
+    return merged;
+  };
+
   let firebaseApi = null;
   let timer = null;
   let busy = false;
@@ -75,7 +133,7 @@
   function applyRemote(remoteState) {
     if (!remoteState) return false;
     const local = readState() || {};
-    const next = { ...remoteState, account: { ...(remoteState.account || {}), ...(local.account || {}) }, _storageVersion: Number(remoteState._storageVersion || 2) };
+    const next = mergeState(local, remoteState);
     localStorage.setItem(STATE_KEY, JSON.stringify(next));
     setMeta({ lastRemoteAt: next.lastSavedAt || new Date().toISOString() });
     window.dispatchEvent(new CustomEvent('offline-sync-applied', { detail: next }));
@@ -92,15 +150,17 @@
       const pending = queue();
       const remote = await remoteRead(uid);
       const remoteState = remote?.state || null;
-      const remoteAt = time(remote?.updatedAt || remoteState?.lastSavedAt);
-      const localAt = time(pending?.updatedAt || local.lastSavedAt);
 
-      if (remoteState && remoteAt > localAt) {
-        applyRemote(remoteState);
-        clearQueue();
-      } else if (pending || !remoteState || localAt >= remoteAt) {
+      if (!remoteState) {
         const source = pending?.state ? stamp(pending.state) : local;
-        const envelope = { schema: 1, deviceId: getDeviceId(), updatedAt: source.lastSavedAt || new Date().toISOString(), state: source };
+        const envelope = { schema: 2, deviceId: getDeviceId(), updatedAt: source.lastSavedAt || new Date().toISOString(), state: source };
+        await remoteWrite(uid, envelope);
+        clearQueue();
+        setMeta({ lastRemoteAt: envelope.updatedAt, lastLocalAt: envelope.updatedAt });
+      } else {
+        const merged = mergeState(local, remoteState);
+        const envelope = { schema: 2, deviceId: getDeviceId(), updatedAt: merged.lastSavedAt || new Date().toISOString(), state: merged };
+        applyRemote(remoteState);
         await remoteWrite(uid, envelope);
         clearQueue();
         setMeta({ lastRemoteAt: envelope.updatedAt, lastLocalAt: envelope.updatedAt });
@@ -143,12 +203,8 @@
     };
     cloudSync.upload = () => reconcile();
 
-    if (typeof cloudSync.download === 'function') {
-      cloudSync.download = () => reconcile();
-    }
-    if (typeof cloudSync.startWatch === 'function') {
-      cloudSync.startWatch = () => {};
-    }
+    if (typeof cloudSync.download === 'function') cloudSync.download = () => reconcile();
+    if (typeof cloudSync.startWatch === 'function') cloudSync.startWatch = () => {};
 
     if (legacyUpload && legacyScheduleUpload) {
       window.dispatchEvent(new CustomEvent('offline-sync-legacy-disabled', {
@@ -177,6 +233,7 @@
       schedule,
       pending: () => !!queue(),
       deviceId: getDeviceId,
+      merge: mergeState,
       status: () => ({ online: navigator.onLine, pending: !!queue(), uid: getUid(), meta: meta() }),
     };
     unifyLegacyCloudSync();
