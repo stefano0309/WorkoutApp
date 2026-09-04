@@ -1,6 +1,6 @@
 package com.example.app;
 
-import com.stefano.workout.R;
+import com.example.app.R;
 
 import android.app.PendingIntent;
 import android.appwidget.AppWidgetManager;
