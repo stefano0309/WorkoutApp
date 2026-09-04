@@ -364,7 +364,10 @@ internal class HealthConnectCacheStore(context: Context) {
         when (raw) {
             "true", "false" -> result.put(key, raw.toBoolean())
             "null" -> result.put(key, JSONObject.NULL)
-            else -> result.put(key, raw.toDoubleOrNull() ?: raw.toLongOrNull() ?: raw)
+            else -> {
+                val value: Any = raw.toDoubleOrNull() ?: raw.toLongOrNull() ?: raw
+                result.put(key, value)
+            }
         }
     }
 
