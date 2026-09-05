@@ -5,10 +5,12 @@ on:
     branches:
       - main
       - 'refactor/**'
+      - 'fix/**'
   pull_request:
     branches:
       - main
       - 'refactor/**'
+      - 'fix/**'
   workflow_dispatch:
 
 permissions:

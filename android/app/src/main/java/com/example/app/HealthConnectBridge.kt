@@ -53,7 +53,7 @@ class HealthConnectBridge(private val activity: Activity) {
 
     private fun status(): Int = HealthConnectClient.getSdkStatus(activity, PROVIDER)
     private fun client(): HealthConnectClient? = if (status() == HealthConnectClient.SDK_AVAILABLE) HealthConnectClient.getOrCreate(activity, PROVIDER) else null
-    private fun reader(hc: HealthConnectClient) = HealthConnectDataReader(hc, ::saveError)
+    private fun reader(hc: HealthConnectClient) = HealthConnectDataReader(hc) { code, error -> saveError(code, error.toString()) }
 
     @JavascriptInterface
     fun requestHealthPermissions() {
