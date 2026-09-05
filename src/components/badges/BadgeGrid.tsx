@@ -1,29 +1,23 @@
 import type { ReactNode } from 'react';
-import type { UnlockedBadge } from '../../types/badge.types';
-import { BADGES } from '../../services/badgeEngine.service';
+import type { BadgeConditionContext, UnlockedBadge } from '../../types/badge.types';
+import { getBadgeState } from '../../services/badgeEngine.service';
 
 export type BadgeGridProps = {
+  context: BadgeConditionContext;
   unlocked: UnlockedBadge[];
-  renderBadge?: (badge: (typeof BADGES)[number] & { unlocked: boolean }) => ReactNode;
+  renderBadge?: (badge: ReturnType<typeof getBadgeState>[number]) => ReactNode;
 };
 
-export function BadgeGrid({ unlocked, renderBadge }: BadgeGridProps) {
-  const unlockedIds = new Set(unlocked.map((badge) => badge.badgeId));
+export function BadgeGrid({ context, unlocked, renderBadge }: BadgeGridProps) {
+  const badges = getBadgeState(context, unlocked);
 
   return (
     <div className="badge-grid" role="list">
-      {BADGES.map((badge) => {
-        const item = {
-          ...badge,
-          unlocked: unlockedIds.has(badge.id),
-        };
-
-        return (
-          <div key={badge.id} role="listitem">
-            {renderBadge ? renderBadge(item) : badge.name}
-          </div>
-        );
-      })}
+      {badges.map((badge) => (
+        <div key={badge.id} role="listitem">
+          {renderBadge ? renderBadge(badge) : badge.name}
+        </div>
+      ))}
     </div>
   );
 }
