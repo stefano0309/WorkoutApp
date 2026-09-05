@@ -36,6 +36,9 @@ jobs:
       - name: Install JavaScript dependencies
         run: npm ci
 
+      - name: Run frontend tests
+        run: npm run test:frontend
+
       - name: Validate required project files
         run: |
           test -f www/index.html
