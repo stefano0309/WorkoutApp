@@ -34,19 +34,47 @@
   const dateLabel = iso => { const d=new Date(iso); return Number.isNaN(d.getTime())?'—':d.toLocaleDateString('it-IT',{day:'2-digit',month:'2-digit'}); };
   const getState = () => { try{return JSON.parse(localStorage.getItem('hybridTrainingSystem')||'{}')}catch(_){return{}} };
   const getSummary = () => { try{const raw=window.AndroidHealthBridge?.readHealthSummary?.();return raw?JSON.parse(raw):null}catch(_){return null} };
+
   let charts = {};
   let days = 30;
+  let lifecycleVersion = 0;
+  let syncTimer = null;
 
-  const destroyCharts=()=>{Object.values(charts).forEach(c=>{try{c.destroy()}catch(_){}});charts={};};
+  const nextLifecycleVersion = () => {
+    lifecycleVersion += 1;
+    return lifecycleVersion;
+  };
+  const isMounted = version => version === lifecycleVersion && !!document.getElementById('hts-health-page');
+  const destroyChart = chartInstance => { try { chartInstance?.destroy(); } catch (_) {} };
+
+  const destroyCharts=()=>{
+    Object.values(charts).forEach(destroyChart);
+    charts={};
+    document.querySelectorAll('#hts-health-page canvas').forEach(canvas=>{
+      try { destroyChart(window.Chart?.getChart?.(canvas)); } catch (_) {}
+    });
+  };
+
+  const destroyCanvasChart = canvas => {
+    if (!canvas || !window.Chart?.getChart) return;
+    destroyChart(window.Chart.getChart(canvas));
+  };
+
   const chart=(id,type,labels,data,label,opts={})=>{
     const el=document.getElementById(id); if(!el || !window.Chart || !data.length) return false;
+    destroyCanvasChart(el);
     const ctx=el.getContext('2d');
-    charts[id]=new Chart(ctx,{type,data:{labels,datasets:[{label,data,borderWidth:2,fill:type==='line',tension:.28,pointRadius:type==='line'?2:3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:type==='doughnut'?{}:{x:{ticks:{color:'#9fb0d0'},grid:{color:'rgba(255,255,255,.05)'}},y:{ticks:{color:'#9fb0d0'},grid:{color:'rgba(255,255,255,.05)'}}},...opts}});
+    const instance=new Chart(ctx,{type,data:{labels,datasets:[{label,data,borderWidth:2,fill:type==='line',tension:.28,pointRadius:type==='line'?2:3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:type==='doughnut'?{}:{x:{ticks:{color:'#9fb0d0'},grid:{color:'rgba(255,255,255,.05)'}},y:{ticks:{color:'#9fb0d0'},grid:{color:'rgba(255,255,255,.05)'}}},...opts}});
+    charts[id]=instance;
     return true;
   };
+
   const doughnut=(id,labels,data)=>{
     const el=document.getElementById(id); if(!el||!window.Chart||!data.length)return false;
-    charts[id]=new Chart(el.getContext('2d'),{type:'doughnut',data:{labels,datasets:[{data,borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{color:'#9fb0d0'}}}}});return true;
+    destroyCanvasChart(el);
+    const instance=new Chart(el.getContext('2d'),{type:'doughnut',data:{labels,datasets:[{data,borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{color:'#9fb0d0'}}}}});
+    charts[id]=instance;
+    return true;
   };
 
   function skeleton(summary){
@@ -95,6 +123,8 @@
   }
 
   function render(){
+    const version=nextLifecycleVersion();
+    if(syncTimer){clearTimeout(syncTimer);syncTimer=null;}
     ensureStyle(); destroyCharts();
     let page=document.getElementById('hts-health-page');
     if(!page){page=document.createElement('section');page.id='hts-health-page';document.body.appendChild(page);}
@@ -118,13 +148,27 @@
     document.getElementById('hc-sync').addEventListener('click',()=>sync(days));
     document.getElementById('hc-perm').addEventListener('click',()=>window.HealthConnectService?.requestPermissions?.());
     document.getElementById('hc-close').addEventListener('click',()=>close());
-    const s=getSummary(); skeleton(s);
+    if(isMounted(version)) skeleton(getSummary());
   }
-  function close(){destroyCharts();document.getElementById('hts-health-page')?.remove();}
+
+  function close(){
+    nextLifecycleVersion();
+    if(syncTimer){clearTimeout(syncTimer);syncTimer=null;}
+    destroyCharts();
+    document.getElementById('hts-health-page')?.remove();
+  }
+
   function sync(range){
+    const version=lifecycleVersion;
+    if(syncTimer){clearTimeout(syncTimer);syncTimer=null;}
     const ok=window.HealthConnectService?.sync?.(range); if(!ok){render(); return;}
     const btn=document.getElementById('hc-sync'); if(btn){btn.disabled=true;btn.innerHTML='<i class="bi bi-arrow-repeat me-1"></i> Sincronizzo…';}
-    setTimeout(()=>{const s=getSummary();if(document.getElementById('hts-health-page')){destroyCharts();skeleton(s);const b=document.getElementById('hc-sync');if(b){b.disabled=false;b.innerHTML='<i class="bi bi-arrow-repeat me-1"></i> Sincronizza';}}},1500);
+    syncTimer=setTimeout(()=>{
+      syncTimer=null;
+      if(!isMounted(version)) return;
+      const s=getSummary(); destroyCharts(); skeleton(s);
+      const b=document.getElementById('hc-sync');if(b){b.disabled=false;b.innerHTML='<i class="bi bi-arrow-repeat me-1"></i> Sincronizza';}
+    },1500);
   }
 
   function injectMenu(){
@@ -140,7 +184,7 @@
     window.__HTS_HEALTH_ROUTE_PATCHED__=true;
   }
   function open(){render();}
-  window.HealthDashboard={open,close,refresh:()=>{if(document.getElementById('hts-health-page')){destroyCharts();skeleton(getSummary());}}};
+  window.HealthDashboard={open,close,refresh:()=>{if(document.getElementById('hts-health-page')){nextLifecycleVersion();if(syncTimer){clearTimeout(syncTimer);syncTimer=null;}destroyCharts();skeleton(getSummary());}}};
   window.addEventListener('health-connect-sync',()=>window.HealthDashboard.refresh());
   window.addEventListener('health-connect-heart-rate',()=>window.HealthDashboard.refresh());
   window.addEventListener('health-connect-route',()=>window.HealthDashboard.refresh());
