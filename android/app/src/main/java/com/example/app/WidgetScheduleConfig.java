@@ -1,0 +1,45 @@
+package com.example.app;
+
+/** Centralized weekly schedule used by the home-screen widget. */
+public final class WidgetScheduleConfig {
+    public static final class Day {
+        private final String name;
+        private final String type;
+        private final String title;
+        private final String focus;
+        private final String cardio;
+
+        private Day(String name, String type, String title, String focus, String cardio) {
+            this.name = name;
+            this.type = type;
+            this.title = title;
+            this.focus = focus;
+            this.cardio = cardio;
+        }
+
+        public String getName() { return name; }
+        public String getType() { return type; }
+        public String getTitle() { return title; }
+        public String getFocus() { return focus; }
+        public String getCardio() { return cardio; }
+    }
+
+    private static final Day[] WEEK = {
+            new Day("Lunedì", "FORZA + CARDIO", "Upper Strength", "Push-up / Pull-up", "Nessun cardio"),
+            new Day("Martedì", "FORZA + CARDIO", "Lower Strength + Corsa Facile", "Unilateralità", "Zona 1"),
+            new Day("Mercoledì", "CORSA", "Interval Run", "Soglia / VO₂max", "Zona 4"),
+            new Day("Giovedì", "FORZA + CARDIO", "Upper Strength + Corsa Facile", "Volume braccia/spalle", "Zona 1–2"),
+            new Day("Venerdì", "FORZA + CARDIO", "Lower Strength + Corsa Progressiva", "Potenza + fatica", "Progressiva"),
+            new Day("Sabato", "CORSA", "Recupero Attivo (Run)", "Smaltimento", "Zona 1"),
+            new Day("Domenica", "CORSA", "Long Run", "Efficienza aerobica", "Zona 2")
+    };
+
+    private WidgetScheduleConfig() {}
+
+    public static Day forIndex(int index) {
+        if (index < 0 || index >= WEEK.length) {
+            throw new IllegalArgumentException("Invalid weekday index: " + index);
+        }
+        return WEEK[index];
+    }
+}

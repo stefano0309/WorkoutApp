@@ -195,6 +195,28 @@ internal class HealthConnectCacheStore(context: Context) {
         helper.writableDatabase.delete("last_error", "id = 1", null)
     }
 
+    // Compatibility API used by HealthConnectBridge.
+    fun readLastError(): String? = readError()
+
+    fun writeRoute(sessionId: String, route: JSONObject) = saveRoute(sessionId, route)
+
+    @Synchronized
+    fun trimRoutes(limit: Int) {
+        val safeLimit = limit.coerceAtLeast(1)
+        helper.writableDatabase.execSQL(
+            "DELETE FROM exercise_routes WHERE session_id NOT IN (SELECT session_id FROM exercise_routes ORDER BY received_at DESC LIMIT ?)",
+            arrayOf(safeLimit),
+        )
+    }
+
+    fun replaceSummary(summary: JSONObject) = saveSummary(summary)
+
+    fun clearLastError() = clearError()
+
+    fun writeLastError(error: JSONObject) {
+        saveError(error.optString("code"), error.optString("message"))
+    }
+
     private fun saveMetaFromSummary(db: SQLiteDatabase, summary: JSONObject) {
         val keys = arrayOf(
             "importedAt", "source", "lookbackDays", "start", "end", "steps",
@@ -240,7 +262,7 @@ internal class HealthConnectCacheStore(context: Context) {
             val item = array.optJSONObject(i) ?: continue
             db.execSQL(
                 "INSERT OR REPLACE INTO exercise_sessions(id, start, end, duration_minutes, exercise_type, exercise_type_name, has_route, route_status, title, notes) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                arrayOf(
+                arrayOf<Any?>(
                     item.optString("id"),
                     item.optString("start"),
                     item.optString("end"),
@@ -342,7 +364,10 @@ internal class HealthConnectCacheStore(context: Context) {
         when (raw) {
             "true", "false" -> result.put(key, raw.toBoolean())
             "null" -> result.put(key, JSONObject.NULL)
-            else -> result.put(key, raw.toDoubleOrNull() ?: raw.toLongOrNull() ?: raw)
+            else -> {
+                val value: Any = raw.toDoubleOrNull() ?: raw.toLongOrNull() ?: raw
+                result.put(key, value)
+            }
         }
     }
 

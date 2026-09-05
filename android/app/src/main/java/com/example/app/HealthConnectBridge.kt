@@ -53,7 +53,7 @@ class HealthConnectBridge(private val activity: Activity) {
 
     private fun status(): Int = HealthConnectClient.getSdkStatus(activity, PROVIDER)
     private fun client(): HealthConnectClient? = if (status() == HealthConnectClient.SDK_AVAILABLE) HealthConnectClient.getOrCreate(activity, PROVIDER) else null
-    private fun reader(hc: HealthConnectClient) = HealthConnectDataReader(hc, ::saveError)
+    private fun reader(hc: HealthConnectClient) = HealthConnectDataReader(hc) { code, error -> saveError(code, error.toString()) }
 
     @JavascriptInterface
     fun requestHealthPermissions() {
@@ -208,13 +208,15 @@ class HealthConnectBridge(private val activity: Activity) {
         return (meters / 1000.0 * 100.0).toInt() / 100.0
     }
 
-    private fun calculateElevationGain(route: androidx.health.connect.client.records.ExerciseRoute): Double {
-        var gain = 0.0; var previous: Double? = null
+    private fun calculateElevationGain(route: androidx.health.connect.client.records.ExerciseRoute): Double? {
+        var gain = 0.0; var previous: Double? = null; var hasAltitude = false
         route.route.forEach { location ->
             val altitude = location.altitude?.inMeters ?: return@forEach
+            hasAltitude = true
             if (previous != null && altitude > previous!!) gain += altitude - previous!!
             previous = altitude
         }
+        if (!hasAltitude) return null
         return (gain * 10.0).toInt() / 10.0
     }
 

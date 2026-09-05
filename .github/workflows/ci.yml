@@ -2,9 +2,15 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'refactor/**'
+      - 'fix/**'
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - 'refactor/**'
+      - 'fix/**'
   workflow_dispatch:
 
 permissions:

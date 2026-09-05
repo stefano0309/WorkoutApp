@@ -26,10 +26,6 @@ public class HybridTrainingWidgetProvider extends AppWidgetProvider {
     private static final String LOG_KEY = "latest_log";
     private static final String HEALTH_PREFS = "health_connect_cache";
     private static final String HEALTH_KEY = "summary";
-    private static final String[] DAYS = {"Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"};
-    private static final String[] TITLES = {"Upper Strength", "Lower Strength + Corsa Facile", "Interval Run", "Upper Strength + Corsa Facile", "Lower Strength + Corsa Progressiva", "Recupero Attivo (Run)", "Long Run"};
-    private static final String[] FOCUS = {"Push-up / Pull-up", "Unilateralità", "Soglia / VO₂max", "Volume braccia/spalle", "Potenza + fatica", "Smaltimento", "Efficienza aerobica"};
-    private static final String[] CARDIO = {"Nessun cardio", "Zona 1", "Zona 4", "Zona 1–2", "Progressiva", "Zona 1", "Zona 2"};
 
     @Override public void onUpdate(Context context, AppWidgetManager manager, int[] ids) { for (int id : ids) updateWidget(context, manager, id); }
     @Override public void onEnabled(Context context) { super.onEnabled(context); updateAllWidgets(context); }
@@ -50,12 +46,13 @@ public class HybridTrainingWidgetProvider extends AppWidgetProvider {
         try {
             Calendar now = Calendar.getInstance();
             int dayIndex = (now.get(Calendar.DAY_OF_WEEK) + 5) % 7;
+            WidgetScheduleConfig.Day day = WidgetScheduleConfig.forIndex(dayIndex);
             RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_training_today);
-            views.setTextViewText(R.id.widget_type, (dayIndex == 2 || dayIndex == 5 || dayIndex == 6) ? "CORSA" : "FORZA + CARDIO");
-            views.setTextViewText(R.id.widget_day, DAYS[dayIndex]);
-            views.setTextViewText(R.id.widget_title, TITLES[dayIndex]);
-            views.setTextViewText(R.id.widget_focus, "Focus · " + FOCUS[dayIndex]);
-            views.setTextViewText(R.id.widget_cardio, CARDIO[dayIndex]);
+            views.setTextViewText(R.id.widget_type, day.getType());
+            views.setTextViewText(R.id.widget_day, day.getName());
+            views.setTextViewText(R.id.widget_title, day.getTitle());
+            views.setTextViewText(R.id.widget_focus, "Focus · " + day.getFocus());
+            views.setTextViewText(R.id.widget_cardio, day.getCardio());
             views.setTextViewText(R.id.widget_date, new SimpleDateFormat("EEEE d MMMM", Locale.ITALIAN).format(now.getTime()));
 
             SharedPreferences prefs = context.getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE);
