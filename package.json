@@ -1,6 +1,7 @@
 {
   "scripts": {
-    "audit:storage": "node scripts/audit-storage-access.mjs"
+    "audit:storage": "node scripts/audit-storage-access.mjs",
+    "test:frontend": "node --test tests/frontend/*.test.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.0",
