@@ -1,16 +1,44 @@
 :root {
+  /* Brand */
   --hts-primary: #ff5a36;
   --hts-primary-soft: #ff7a52;
+  --hts-primary-contrast: #ffffff;
+  --hts-info: #62d4ff;
+  --hts-info-soft: #b7c6ff;
+  --hts-success: #35d07f;
+  --hts-success-contrast: #08240f;
+  --hts-danger: #dc3545;
+
+  /* Surfaces and content */
   --hts-background: #0b1020;
+  --hts-background-deep: #080d19;
+  --hts-background-elevated: #0e1528;
   --hts-surface: #121a2d;
   --hts-surface-2: #19233a;
+  --hts-surface-3: #162033;
   --hts-border: #2c3753;
+  --hts-border-soft: rgba(159, 176, 208, 0.18);
   --hts-text: #eef3ff;
   --hts-muted: #9fb0d0;
-  --hts-accent-blue: #62d4ff;
+  --hts-muted-strong: #7f8daa;
+
+  /* Effects */
+  --hts-overlay: rgba(4, 8, 18, 0.82);
+  --hts-scrim: rgba(0, 0, 0, 0.72);
+  --hts-glass: rgba(255, 255, 255, 0.045);
+  --hts-glass-strong: rgba(255, 255, 255, 0.06);
+  --hts-focus: #62d4ff;
+  --hts-shadow-sm: 0 7px 18px rgba(0, 0, 0, 0.12);
+  --hts-shadow-md: 0 10px 30px rgba(0, 0, 0, 0.12);
+  --hts-shadow-lg: 0 25px 80px rgba(0, 0, 0, 0.35);
+
+  /* Shape and spacing */
   --hts-radius-card: 16px;
+  --hts-radius-card-lg: 24px;
   --hts-radius-control: 12px;
+  --hts-radius-pill: 999px;
   --hts-space-1: 8px;
   --hts-space-2: 16px;
   --hts-space-3: 24px;
+  --hts-space-4: 32px;
 }
