@@ -1,10 +1,6 @@
-export type ProgressPhoto = {
-  id: string;
-  date: string;
-  weightKg?: number | null;
-  bodyFat?: number | null;
-  thumb: string;
-};
+import type { ProgressPhotoDto } from '../../types/progress-photo.types';
+
+export type ProgressPhoto = ProgressPhotoDto;
 
 export function getComparisonPair(photos: ProgressPhoto[]) {
   return [...photos].sort((a, b) => a.date.localeCompare(b.date)).slice(-2);
