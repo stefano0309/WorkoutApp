@@ -41,4 +41,30 @@
   --hts-space-2: 16px;
   --hts-space-3: 24px;
   --hts-space-4: 32px;
+
+  /* Motion */
+  --hts-duration-fast: 150ms;
+  --hts-duration-normal: 250ms;
+  --hts-duration-state: 350ms;
+  --hts-duration-emphasis: 600ms;
+  --hts-ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --hts-ease-emphasized: cubic-bezier(0.22, 1, 0.36, 1);
+  --hts-ease-linear: linear;
+
+  /* Semantic transitions */
+  --hts-transition-color: color var(--hts-duration-fast) var(--hts-ease-standard),
+    background-color var(--hts-duration-fast) var(--hts-ease-standard),
+    border-color var(--hts-duration-fast) var(--hts-ease-standard);
+  --hts-transition-surface: transform var(--hts-duration-normal) var(--hts-ease-standard),
+    box-shadow var(--hts-duration-normal) var(--hts-ease-standard),
+    opacity var(--hts-duration-normal) var(--hts-ease-standard);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --hts-duration-fast: 1ms;
+    --hts-duration-normal: 1ms;
+    --hts-duration-state: 1ms;
+    --hts-duration-emphasis: 1ms;
+  }
 }
