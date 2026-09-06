@@ -1,17 +1,44 @@
-export type WorkoutSet = { id: string; reps: number; loadKg: number; rpe: number | null; restSeconds: number; completed: boolean };
-export type WorkoutExercise = { id: string; name: string; sets: WorkoutSet[] };
-export type WorkoutSessionDraft = { id: string; name: string; startedAt: string; updatedAt: string; exercises: WorkoutExercise[]; healthConnectRunId?: string | null };
+import { LocalStorageRepository } from '../services/storage.service';
+
+export type WorkoutSet = {
+  id: string;
+  reps: number;
+  loadKg: number;
+  rpe: number | null;
+  restSeconds: number;
+  completed: boolean;
+};
+
+export type WorkoutExercise = {
+  id: string;
+  name: string;
+  sets: WorkoutSet[];
+};
+
+export type WorkoutSessionDraft = {
+  id: string;
+  name: string;
+  startedAt: string;
+  updatedAt: string;
+  exercises: WorkoutExercise[];
+  healthConnectRunId?: string | null;
+};
 
 const KEY = 'hts.sessionDraft';
+const repository = new LocalStorageRepository<WorkoutSessionDraft | null>(KEY, () => null);
 
 export const SessionStore = {
   load(): WorkoutSessionDraft | null {
-    try { const raw = localStorage.getItem(KEY); return raw ? JSON.parse(raw) : null; } catch { return null; }
+    return repository.load().value;
   },
-  save(session: WorkoutSessionDraft) {
+
+  save(session: WorkoutSessionDraft): WorkoutSessionDraft {
     const next = { ...session, updatedAt: new Date().toISOString() };
-    localStorage.setItem(KEY, JSON.stringify(next));
+    repository.save(next);
     return next;
   },
-  clear() { localStorage.removeItem(KEY); },
+
+  clear(): void {
+    repository.clear();
+  },
 };

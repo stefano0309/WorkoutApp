@@ -46,8 +46,8 @@
   const loadAuth = async () => {
     if (authApi) return authApi;
     const [{ getApps }, authModule] = await Promise.all([
-      import('https://www.gstatic.com/firebase/12.18.0/firebase-app.js'),
-      import('https://www.gstatic.com/firebase/12.18.0/firebase-auth.js'),
+      import('./firebase-runtime.bundle.js'),
+      import('./firebase-runtime.bundle.js'),
     ]);
     const { getAuth, GoogleAuthProvider, signInWithCredential, signOut } = authModule;
     const apps = getApps();
@@ -155,12 +155,16 @@
   const boot = async () => {
     try {
       await loadPlugin();
-      if (patch()) return;
-      const timer = setInterval(() => {
-        if (patch()) clearInterval(timer);
-      }, 25);
-      window.addEventListener('firebase-ready', patch);
-      setTimeout(() => clearInterval(timer), 20000);
+
+      // Register the event listener before checking the current state so we do
+      // not miss the one-time Firebase bootstrap completion event.
+      window.addEventListener('firebase-ready', patch, { once: true });
+
+      // The Firebase bootstrap may already have completed before native-auth.js
+      // was evaluated. An immediate state check handles that race without polling.
+      if (patch()) {
+        window.removeEventListener('firebase-ready', patch);
+      }
     } catch (error) {
       const normalized = normalizeError(error);
       console.error('[HTS Auth] bootstrap failed', error);

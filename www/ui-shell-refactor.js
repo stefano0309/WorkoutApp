@@ -121,15 +121,22 @@
     });
   }
 
+  function syncShell() {
+    ensureSidebar();
+    ensureBottomNav();
+    ensureFullMenu();
+    refreshActive();
+  }
+
   function patchRoute() {
     if (window.__HTS_SALUTE_ROUTE_PATCHED__ || typeof window.route !== 'function') return;
     const original = window.route;
     window.route = function(page, ...args) {
-      if (page === 'salute') {
-        openSalute();
-        return;
-      }
-      return original.call(this, page, ...args);
+      const result = page === 'salute'
+        ? openSalute()
+        : original.call(this, page, ...args);
+      syncShell();
+      return result;
     };
     window.__HTS_SALUTE_ROUTE_PATCHED__ = true;
   }
@@ -144,19 +151,8 @@
 
   function boot() {
     injectStyle();
-    ensureSidebar();
-    ensureBottomNav();
-    ensureFullMenu();
+    syncShell();
     patchRoute();
-    refreshActive();
-    const obs = new MutationObserver(() => {
-      ensureSidebar();
-      ensureBottomNav();
-      ensureFullMenu();
-      patchRoute();
-      refreshActive();
-    });
-    obs.observe(document.body, { childList: true, subtree: true });
     window.addEventListener('health-connect-sync', refreshActive);
     window.addEventListener('health-connect-heart-rate', refreshActive);
     window.addEventListener('health-connect-route', refreshActive);

@@ -2,9 +2,15 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'refactor/**'
+      - 'fix/**'
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - 'refactor/**'
+      - 'fix/**'
   workflow_dispatch:
 
 permissions:
@@ -29,6 +35,9 @@ jobs:
 
       - name: Install JavaScript dependencies
         run: npm ci
+
+      - name: Run frontend tests
+        run: npm run test:frontend
 
       - name: Validate required project files
         run: |
@@ -59,6 +68,13 @@ jobs:
           chmod +x gradlew
           ./gradlew testDebugUnitTest lintDebug assembleDebug --stacktrace
 
+      - name: Enable KVM group permissions
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo chmod 666 /dev/kvm
+
       - name: Run Android instrumentation tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -67,6 +83,7 @@ jobs:
           arch: x86_64
           profile: pixel_2
           script: cd android && ./gradlew connectedDebugAndroidTest --stacktrace
+          disable-linux-hw-accel: false
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4

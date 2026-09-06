@@ -12,6 +12,17 @@ export const BADGES: Badge[] = [
   },
 ];
 
+export type BadgeState = Badge & { unlocked: boolean };
+
+export function getBadgeState(context: BadgeConditionContext, unlocked: UnlockedBadge[] = []): BadgeState[] {
+  const unlockedIds = new Set(unlocked.map(badge => badge.badgeId));
+
+  return BADGES.map(badge => ({
+    ...badge,
+    unlocked: unlockedIds.has(badge.id) || badge.condition(context),
+  }));
+}
+
 export function evaluateBadges(context: BadgeConditionContext, unlocked: UnlockedBadge[] = []) {
   const now = new Set(unlocked.map(b => b.badgeId));
   const newlyUnlocked: UnlockedBadge[] = [];
