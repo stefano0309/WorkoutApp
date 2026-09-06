@@ -33,6 +33,7 @@
   --hts-shadow-lg: 0 25px 80px rgba(0, 0, 0, 0.35);
 
   /* Shape and spacing */
+  --hts-radius-sm: 8px;
   --hts-radius-card: 16px;
   --hts-radius-card-lg: 24px;
   --hts-radius-control: 12px;
@@ -41,6 +42,19 @@
   --hts-space-2: 16px;
   --hts-space-3: 24px;
   --hts-space-4: 32px;
+  --hts-space-5: 40px;
+
+  /* Semantic aliases: use these in legacy/runtime styles during migration. */
+  --hts-color-brand: var(--hts-primary);
+  --hts-color-brand-soft: var(--hts-primary-soft);
+  --hts-color-content: var(--hts-text);
+  --hts-color-content-muted: var(--hts-muted);
+  --hts-color-surface: var(--hts-surface);
+  --hts-color-surface-elevated: var(--hts-surface-2);
+  --hts-color-border: var(--hts-border);
+  --hts-radius-default: var(--hts-radius-card);
+  --hts-radius-large: var(--hts-radius-card-lg);
+  --hts-radius-interactive: var(--hts-radius-control);
 
   /* Motion */
   --hts-duration-fast: 150ms;
