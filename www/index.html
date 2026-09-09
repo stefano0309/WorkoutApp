@@ -14,12 +14,16 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="index.css">
+    <link rel="stylesheet" href="accessibility.css">
   </head>
   <body>
+    <a class="skip-link" href="#app">Vai al contenuto principale</a>
+
     <div class="container-fluid min-vh-100 p-0">
       <div class="row g-0 min-vh-100">
         <aside
           class="col-12 col-lg-3 col-xl-2 sidebar p-3 border-bottom border-lg-end"
+          aria-label="Navigazione principale"
         >
           <div class="d-flex flex-column h-100">
             <div class="mb-3">
@@ -30,6 +34,8 @@
               <div
                 id="saveStatus"
                 class="badge bg-success bg-opacity-25 text-success border border-success w-100 mt-2 py-2"
+                role="status"
+                aria-live="polite"
               >
                 Storage locale attivo
               </div>
@@ -49,6 +55,7 @@
             <nav
               id="nav"
               class="nav nav-pills d-none d-lg-flex flex-lg-column gap-1 overflow-auto flex-nowrap mb-3"
+              aria-label="Sezioni dell'applicazione"
             ></nav>
           </div>
         </aside>
@@ -56,24 +63,28 @@
         <main
           class="col-12 col-lg-9 col-xl-10 p-3 p-md-4 pb-5 mb-5 mb-lg-0"
           id="app"
+          tabindex="-1"
+          aria-label="Contenuto principale"
         ></main>
       </div>
     </div>
 
     <div class="bottom-nav-wrap d-lg-none">
-      <div class="bottom-nav-pill" id="bottomNav"></div>
+      <nav class="bottom-nav-pill" id="bottomNav" aria-label="Navigazione mobile"></nav>
     </div>
 
     <button
       class="fab-log-btn"
       id="fabLog"
+      type="button"
       onclick="openQuickLog()"
       title="Registrazione rapida"
+      aria-label="Apri registrazione rapida"
     >
-      <i class="bi bi-plus-lg"></i>
+      <i class="bi bi-plus-lg" aria-hidden="true"></i>
     </button>
 
-    <div class="modal fade" id="appModal" tabindex="-1" aria-hidden="true">
+    <div class="modal fade" id="appModal" tabindex="-1" aria-hidden="true" aria-labelledby="modalTitle">
       <div class="modal-dialog modal-dialog-centered">
         <div
           class="modal-content bg-dark border-secondary text-light"
@@ -198,5 +209,6 @@
     </script>
 
     <script src="index.js"></script>
+    <script src="accessibility-runtime.js"></script>
   </body>
 </html>
