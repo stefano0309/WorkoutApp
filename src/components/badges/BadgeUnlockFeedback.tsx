@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import type { Badge, UnlockedBadge } from '../../types/badge.types';
+import './badge-unlock.css';
 
 export type BadgeUnlockFeedbackProps = {
   badge: Badge | null;
@@ -8,10 +9,7 @@ export type BadgeUnlockFeedbackProps = {
   durationMs?: number;
 };
 
-/**
- * Non-blocking celebration for a newly unlocked badge.
- * Respects reduced-motion preferences and optionally emits a light haptic pulse.
- */
+/** Non-blocking celebration for a newly unlocked badge. */
 export function BadgeUnlockFeedback({
   badge,
   unlocked,
@@ -20,16 +18,16 @@ export function BadgeUnlockFeedback({
 }: BadgeUnlockFeedbackProps) {
   useEffect(() => {
     if (!badge || !unlocked) return undefined;
-
     const timer = window.setTimeout(() => onDismiss?.(), durationMs);
     return () => window.clearTimeout(timer);
   }, [badge, unlocked, durationMs, onDismiss]);
 
-  if (!badge || !unlocked) return null;
+  useEffect(() => {
+    if (!badge || !unlocked || typeof navigator.vibrate !== 'function') return;
+    navigator.vibrate(18);
+  }, [badge, unlocked]);
 
-  const vibrate = () => {
-    if (typeof navigator.vibrate === 'function') navigator.vibrate(18);
-  };
+  if (!badge || !unlocked) return null;
 
   return (
     <div
@@ -52,7 +50,6 @@ export function BadgeUnlockFeedback({
         className="badge-unlock-feedback__close"
         aria-label="Chiudi notifica badge"
         onClick={onDismiss}
-        onFocus={vibrate}
       >
         <i className="bi bi-x-lg" aria-hidden="true" />
       </button>
