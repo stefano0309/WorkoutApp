@@ -30,3 +30,23 @@ test('dynamic accessibility enhancer covers keyboard-operable role buttons', () 
   assert.match(runtime, /event\.key === ' '/);
   assert.match(runtime, /aria-labelledby/);
 });
+
+test('UI-04 defines the complete interaction-state vocabulary', () => {
+  assert.match(css, /:hover/);
+  assert.match(css, /:active/);
+  assert.match(css, /aria-pressed/);
+  assert.match(css, /aria-disabled/);
+  assert.match(css, /data-state="loading"/);
+  assert.match(css, /data-state="success"/);
+  assert.match(css, /data-state="error"/);
+  assert.match(css, /data-state="empty"/);
+  assert.match(css, /aria-busy="true"/);
+  assert.match(css, /aria-invalid="true"/);
+});
+
+test('UI-04 loading state respects reduced-motion preference', () => {
+  assert.match(css, /@keyframes hts-state-spin/);
+  assert.match(css, /\.is-loading::after/);
+  assert.match(css, /\[data-state="loading"\]::after/);
+  assert.match(css, /animation:\s*none/);
+});
