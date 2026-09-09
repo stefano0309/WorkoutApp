@@ -34,10 +34,14 @@ function formatContext(photo: ComparableProgressPhoto) {
 function PhotoPane({
   photo,
   label,
+  loading,
+  onLoad,
   onError,
 }: {
   photo: ComparableProgressPhoto | null;
   label: string;
+  loading: boolean;
+  onLoad: () => void;
   onError: () => void;
 }) {
   const hasSource = Boolean(photo?.thumb);
@@ -46,14 +50,18 @@ function PhotoPane({
     <div className="photo-comparison__pane" aria-label={label}>
       <div className="photo-comparison__pane-label">{label}</div>
       {hasSource ? (
-        <img
-          className="photo-comparison__image"
-          src={photo?.thumb}
-          alt={`${label} — ${photo ? formatContext(photo) : 'foto non disponibile'}`}
-          loading="lazy"
-          decoding="async"
-          onError={onError}
-        />
+        <>
+          <img
+            className="photo-comparison__image"
+            src={photo?.thumb}
+            alt={`${label} — ${photo ? formatContext(photo) : 'foto non disponibile'}`}
+            loading="lazy"
+            decoding="async"
+            onLoad={onLoad}
+            onError={onError}
+          />
+          {loading ? <div className="photo-comparison__loading" role="status">Caricamento foto…</div> : null}
+        </>
       ) : (
         <div className="photo-comparison__placeholder" role="status">
           Foto non disponibile
@@ -73,6 +81,8 @@ export function PhotoComparison({
   const [position, setPosition] = useState(() => Math.min(100, Math.max(0, initialPosition)));
   const [beforeError, setBeforeError] = useState(false);
   const [afterError, setAfterError] = useState(false);
+  const [beforeLoading, setBeforeLoading] = useState(Boolean(before?.thumb));
+  const [afterLoading, setAfterLoading] = useState(Boolean(after?.thumb));
   const hasPair = Boolean(before?.thumb && after?.thumb);
   const hasUsablePair = hasPair && !beforeError && !afterError;
 
@@ -100,7 +110,12 @@ export function PhotoComparison({
         <PhotoPane
           photo={afterError ? null : after}
           label="Dopo"
-          onError={() => setAfterError(true)}
+          loading={afterLoading && !afterError}
+          onLoad={() => setAfterLoading(false)}
+          onError={() => {
+            setAfterLoading(false);
+            setAfterError(true);
+          }}
         />
         <div
           className="photo-comparison__before-layer"
@@ -110,7 +125,12 @@ export function PhotoComparison({
           <PhotoPane
             photo={beforeError ? null : before}
             label="Prima"
-            onError={() => setBeforeError(true)}
+            loading={beforeLoading && !beforeError}
+            onLoad={() => setBeforeLoading(false)}
+            onError={() => {
+              setBeforeLoading(false);
+              setBeforeError(true);
+            }}
           />
         </div>
         {hasUsablePair ? (
