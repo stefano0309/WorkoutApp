@@ -1,0 +1,3163 @@
+const STORAGE_KEY = "hybridTrainingSystem";
+const STORAGE_VERSION = 2;
+const NATIVE_FILE = "hybrid-training-data.json";
+
+// ===== ADAPTER DI PERSISTENZA (localStorage + Capacitor Filesystem) =====
+// In un WebView "nudo" o nel browser, usiamo solo localStorage.
+// Una volta impacchettata con Capacitor (npx cap add android/ios),
+// il runtime nativo espone window.Capacitor: in quel caso scriviamo
+// ANCHE un file JSON persistente nella sandbox dell'app (Directory.Data),
+// molto più resiliente della sola cache WebView.
+const NativeStorage = {
+  isNative() {
+    try {
+      return !!(
+        window.Capacitor &&
+        window.Capacitor.isNativePlatform &&
+        window.Capacitor.isNativePlatform() &&
+        window.Capacitor.Plugins &&
+        window.Capacitor.Plugins.Filesystem
+      );
+    } catch (e) {
+      return false;
+    }
+  },
+  async write(data) {
+    if (!this.isNative()) return false;
+    try {
+      const { Filesystem, Directory, Encoding } = window.Capacitor.Plugins;
+      await Filesystem.writeFile({
+        path: NATIVE_FILE,
+        data: JSON.stringify(data),
+        directory: Directory.Data,
+        encoding: Encoding.UTF8,
+      });
+      return true;
+    } catch (e) {
+      console.error("NativeStorage write failed", e);
+      return false;
+    }
+  },
+  async read() {
+    if (!this.isNative()) return null;
+    try {
+      const { Filesystem, Directory, Encoding } = window.Capacitor.Plugins;
+      const res = await Filesystem.readFile({
+        path: NATIVE_FILE,
+        directory: Directory.Data,
+        encoding: Encoding.UTF8,
+      });
+      return JSON.parse(res.data);
+    } catch (e) {
+      // il file potrebbe non esistere ancora al primo avvio: non è un errore
+      return null;
+    }
+  },
+};
+
+// ===== CLOUD SYNC (Firebase Auth Google + Realtime Database) =====
+// Ponte tra lo stato locale e window.__fb (definito nello script
+// module sopra). Strategia: last-write-wins basata su lastSavedAt.
+// Le foto (base64) restano solo sul dispositivo: su Firebase
+// sincronizziamo solo i metadati per restare entro limiti ragionevoli
+// di Realtime Database (la sync completa delle immagini richiederebbe
+// Firebase Storage: vedi lista migliorie).
+const CloudSync = {
+  uploadTimer: null,
+  unsubscribe: null,
+  suppressNextRemoteApply: false,
+
+  ready() {
+    return new Promise((resolve) => {
+      if (window.__fb) return resolve();
+      window.addEventListener("firebase-ready", () => resolve(), {
+        once: true,
+      });
+    });
+  },
+
+  async init() {
+    await this.ready();
+    window.__fb.onAuthChange(async (user) => {
+      if (user) {
+        state.account.uid = user.uid;
+        state.account.email = user.email || null;
+        try {
+          const remote = await window.__fb.readState(user.uid);
+          if (remote && remote.lastSavedAt) {
+            const localTime = state.lastSavedAt
+              ? new Date(state.lastSavedAt).getTime()
+              : 0;
+            const remoteTime = new Date(remote.lastSavedAt).getTime();
+            if (remoteTime > localTime) {
+              this.suppressNextRemoteApply = true;
+              const keepAccount = state.account;
+              Object.keys(DEFAULT_STATE).forEach((k) => delete state[k]);
+              Object.assign(state, clone(DEFAULT_STATE), remote, {
+                _storageVersion: STORAGE_VERSION,
+                account: keepAccount,
+              });
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+            }
+          }
+          const username = await window.__fb.readUsername(user.uid);
+          if (!username) {
+            openUsernameModal(true);
+          } else {
+            state.account.username = username;
+          }
+        } catch (e) {
+          console.error("Sincronizzazione iniziale fallita", e);
+        }
+        state.account.lastSyncAt = new Date().toISOString();
+        save();
+        render();
+        this.watch(user.uid);
+      } else {
+        this.stopWatch();
+        state.account = clone(DEFAULT_STATE.account);
+        save();
+        render();
+      }
+    });
+  },
+
+  watch(uid) {
+    this.stopWatch();
+    this.unsubscribe = window.__fb.watchState(uid, (remote) => {
+      if (!remote || !remote.lastSavedAt) return;
+      if (this.suppressNextRemoteApply) {
+        this.suppressNextRemoteApply = false;
+        return;
+      }
+      const localTime = state.lastSavedAt
+        ? new Date(state.lastSavedAt).getTime()
+        : 0;
+      const remoteTime = new Date(remote.lastSavedAt).getTime();
+      // margine di 1.5s per non riapplicare l'eco della propria scrittura
+      if (remoteTime > localTime + 1500) {
+        const keepAccount = state.account;
+        Object.keys(DEFAULT_STATE).forEach((k) => delete state[k]);
+        Object.assign(state, clone(DEFAULT_STATE), remote, {
+          _storageVersion: STORAGE_VERSION,
+          account: keepAccount,
+        });
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        render();
+        toast("Dati aggiornati da un altro dispositivo");
+      }
+    });
+  },
+
+  stopWatch() {
+    if (this.unsubscribe) {
+      this.unsubscribe();
+      this.unsubscribe = null;
+    }
+  },
+
+  scheduleUpload() {
+    if (!state.account.uid || !window.__fb) return;
+    clearTimeout(this.uploadTimer);
+    this.uploadTimer = setTimeout(() => this.upload(), 1500);
+  },
+
+  async upload() {
+    if (!state.account.uid || !window.__fb) return;
+    try {
+      const { photos, ...syncable } = state;
+      await window.__fb.writeState(state.account.uid, {
+        ...syncable,
+        photos: (photos || []).map(({ thumb, ...meta }) => meta),
+      });
+      state.account.lastSyncAt = new Date().toISOString();
+      const el = document.getElementById("cloudSyncStatus");
+      if (el)
+        el.textContent =
+          "Ultima sincronizzazione: " + new Date().toLocaleString("it-IT");
+    } catch (e) {
+      console.error("Upload cloud fallito", e);
+    }
+  },
+
+  async signIn() {
+    try {
+      await this.ready();
+      await window.__fb.signIn();
+    } catch (e) {
+      if (e && e.message === "native-google-signin-not-configured") {
+        alert(
+          "Il login Google nell'app nativa richiede un plugin dedicato (@capacitor-firebase/authentication). Per ora puoi accedere aprendo l'app dal browser.",
+        );
+      } else {
+        console.error(e);
+        alert("Accesso non riuscito. Riprova.");
+      }
+    }
+  },
+
+  async signOut() {
+    try {
+      await window.__fb.signOutUser();
+    } catch (e) {
+      console.error(e);
+    }
+  },
+};
+
+const DEFAULT_STATE = {
+  _storageVersion: STORAGE_VERSION,
+  profile: null,
+  assessment: null,
+  meso: { week: 1, started: new Date().toISOString(), history: [] },
+  sessions: {},
+  log: [],
+  metrics: [], // { id, date:'YYYY-MM-DD', weight:number(kg), bodyFat:number(%)|null, note }
+  photos: [], // { id, date, w:number(kg)|null, thumb:base64DataURL, nativePath:string|null }
+  statsView: {
+    year: new Date().getFullYear(),
+    month: new Date().getMonth(),
+  },
+  timer: { mode: "rest", seconds: 0, running: false },
+  activePage: "dashboard",
+  settings: { dynamicAlert: true, sound: true },
+  zoneTest: null,
+  lastSavedAt: null,
+  account: { uid: null, username: null, email: null, lastSyncAt: null },
+};
+
+let bsModal = null;
+
+function clone(v) {
+  return JSON.parse(JSON.stringify(v));
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return clone(DEFAULT_STATE);
+    const p = JSON.parse(raw);
+    return {
+      ...clone(DEFAULT_STATE),
+      ...p,
+      _storageVersion: STORAGE_VERSION,
+      meso: { ...DEFAULT_STATE.meso, ...(p.meso || {}) },
+      timer: { ...DEFAULT_STATE.timer, ...(p.timer || {}) },
+      settings: { ...DEFAULT_STATE.settings, ...(p.settings || {}) },
+      log: Array.isArray(p.log) ? p.log : [],
+      metrics: Array.isArray(p.metrics) ? p.metrics : [],
+      photos: Array.isArray(p.photos) ? p.photos : [],
+      statsView: { ...DEFAULT_STATE.statsView, ...(p.statsView || {}) },
+      account: { ...DEFAULT_STATE.account, ...(p.account || {}) },
+    };
+  } catch (e) {
+    console.warn("localStorage read failed", e);
+    return clone(DEFAULT_STATE);
+  }
+}
+
+const state = loadState();
+
+const WEEK = {
+  1: { name: "Accumulo", volume: 1.0, rpe: "6–7", badge: "bg-success" },
+  2: { name: "Accumulo", volume: 1.08, rpe: "7–8", badge: "bg-success" },
+  3: {
+    name: "Picco",
+    volume: 1.15,
+    rpe: "8–9",
+    badge: "bg-warning text-dark",
+  },
+  4: {
+    name: "Scarico",
+    volume: 0.65,
+    rpe: "5–6",
+    badge: "bg-info text-dark",
+  },
+};
+
+const SCHEDULE = [
+  {
+    day: "Lunedì",
+    title: "Upper Strength",
+    focus: "Push-up / Pull-up",
+    cardio: "Nessun cardio",
+    patterns: ["push", "pull"],
+  },
+  {
+    day: "Martedì",
+    title: "Lower Strength + Corsa Facile",
+    focus: "Unilateralità",
+    cardio: "Zona 1",
+    patterns: ["squat", "hinge"],
+  },
+  {
+    day: "Mercoledì",
+    title: "Interval Run",
+    focus: "Soglia / VO₂max",
+    cardio: "Zona 4",
+    patterns: [],
+  },
+  {
+    day: "Giovedì",
+    title: "Upper Strength + Corsa Facile",
+    focus: "Volume braccia/spalle",
+    cardio: "Zona 1–2",
+    patterns: ["push", "pull", "shoulder"],
+  },
+  {
+    day: "Venerdì",
+    title: "Lower Strength + Corsa Progressiva",
+    focus: "Potenza + fatica",
+    cardio: "Progressiva",
+    patterns: ["squat", "hinge"],
+  },
+  {
+    day: "Sabato",
+    title: "Recupero Attivo (Run)",
+    focus: "Smaltimento",
+    cardio: "Zona 1",
+    patterns: [],
+  },
+  {
+    day: "Domenica",
+    title: "Long Run",
+    focus: "Efficienza aerobica",
+    cardio: "Zona 2",
+    patterns: [],
+  },
+];
+
+const LIB = {
+  push: [
+    [
+      "Push-up ginocchia / negative 5s",
+      "Principiante",
+      "spinta",
+      "3×8–12",
+      "TUT 5s eccentrica",
+    ],
+    ["Push-up standard", "Intermedio", "spinta", "3×10–20", "TUT controllato"],
+    ["Push-up piedi rialzati", "Avanzato", "spinta", "4×6–12", "TUT 3-1-3"],
+    ["Archer / 1-arm assist", "Élite", "spinta", "4×4–8/lato", "TUT tecnico"],
+  ],
+  pull: [
+    [
+      "Pull-up assistiti / negative 5s",
+      "Principiante",
+      "tirata",
+      "3×3–6",
+      "Negative 5s",
+    ],
+    ["Pull-up strict complete", "Intermedio", "tirata", "3×5–10", "Strict"],
+    ["Pull-up tempo", "Avanzato", "tirata", "4×4–8", "TUT 3-1-3"],
+    ["L-sit pull-up / 1-arm assist", "Élite", "tirata", "4×3–6", "Controllo"],
+  ],
+  squat: [
+    ["Box squat / assistito", "Principiante", "squat", "3×10–15", "Controllo"],
+    [
+      "Squat libero standard",
+      "Intermedio",
+      "squat",
+      "3×12–20",
+      "Tempo naturale",
+    ],
+    [
+      "Tempo squat / jump landing",
+      "Avanzato",
+      "squat",
+      "4×8–12",
+      "Tempo 3-1-1",
+    ],
+    ["Pistol squat / jump pistol", "Élite", "squat", "4×4–8/lato", "Tecnica"],
+  ],
+  hinge: [
+    [
+      "RDL assistito (equilibrio)",
+      "Principiante",
+      "hinge",
+      "3×8–12/lato",
+      "Controllo",
+    ],
+    ["Single leg RDL", "Intermedio", "hinge", "3×8–12/lato", "Controllo"],
+    ["Single leg RDL tempo", "Avanzato", "hinge", "4×6–10/lato", "Tempo 3-1-1"],
+    [
+      "Nordic curl iso pause 45°",
+      "Élite",
+      "hinge",
+      "4×4–8",
+      "Pause isometriche",
+    ],
+  ],
+  shoulder: [
+    [
+      "Scapular push-up",
+      "Principiante",
+      "spalla",
+      "2×12–15",
+      "Controllo scapolare",
+    ],
+    ["Pike push-up", "Intermedio", "spalla", "3×6–12", "Range completo"],
+    ["Pike push-up tempo", "Avanzato", "spalla", "4×6–10", "TUT 3-1-3"],
+    ["Handstand push-up assistito", "Élite", "spalla", "4×3–8", "Tecnica"],
+  ],
+};
+
+const CORE = [
+  ["Anti-estensione", "Plank", "3×20–30s"],
+  ["Anti-rotazione", "Dead Bug", "3×8/lato"],
+  ["Anti-flessione laterale", "Side Plank", "2×15–20s/lato"],
+  ["Compressione", "Hollow Body ginocchia piegate", "3×15s"],
+  ["Flessione d’anca", "Reverse Crunch", "3×10–15"],
+  ["Stabilità bacino", "Marcia in plank", "2×10/lato"],
+];
+
+const PREV = [
+  ["Ginocchio", "Spanish Squat isometrico / Wall Sit", "3×45s"],
+  ["Achille/Caviglia", "Heel drops eccentrici (esteso/flesso)", "3×15"],
+  ["Spalla", "Y-T-W Raise / Scapular Push-up", "2–3×15–20"],
+  ["Anca", "Copenhagen Plank / Clamshell", "2–3×15–30s"],
+  ["Polso/Gomito", "Quadruped Wrist Rocks / eccentriche", "2–3×12–15"],
+];
+
+// ===== PROGRAMMA DI CORSA =====
+const RUN_ZONES = [
+  {
+    z: "Zona 1",
+    range: "50–60% FC max",
+    name: "Recupero",
+    desc: "Recupero attivo e capillarizzazione. Intensità molto bassa, conversazione fluida.",
+    badge: "border-info text-info",
+  },
+  {
+    z: "Zona 2",
+    range: "60–70% FC max",
+    name: "Base Aerobica",
+    desc: "Zona fondamentale per l'efficienza aerobica e la capacità di bruciare grassi.",
+    badge: "border-success text-success",
+  },
+  {
+    z: "Zona 3",
+    range: "70–80% FC max",
+    name: "Sforzo Moderato-Duro",
+    desc: "Allena la resistenza alla fatica e la transizione aerobica-anaerobica.",
+    badge: "border-warning text-warning",
+  },
+  {
+    z: "Zona 4",
+    range: "80–90%+ FC max",
+    name: "Soglia / VO₂max",
+    desc: "Migliora la potenza aerobica massima e la soglia del lattato.",
+    badge: "border-danger text-danger",
+  },
+];
+
+const RUN_SESSIONS = [
+  {
+    day: "Martedì e Giovedì",
+    title: "Easy Run",
+    zone: "Zona 1",
+    duration: "35–40 min",
+    icon: "bi-wind",
+    desc: "Eseguite dopo la sessione di forza. Servono ad accumulare volume aerobico a basso costo di recupero, senza interferire con il lavoro neuromuscolare del giorno.",
+  },
+  {
+    day: "Mercoledì",
+    title: "Interval Run",
+    zone: "Zona 4",
+    duration: "≈30 min totali",
+    icon: "bi-lightning-charge",
+    desc: "L'allenamento più intenso della settimana. Struttura tipica: 6 × 1 minuto in Z4 con 2 minuti di recupero in Z2, per massimizzare il VO₂max.",
+  },
+  {
+    day: "Venerdì",
+    title: "Corsa Progressiva",
+    zone: "Z1 → Z3",
+    duration: "45 min",
+    icon: "bi-graph-up-arrow",
+    desc: "Il ritmo aumenta fluidamente durante la sessione. Allena la capacità di reggere intensità crescenti su gambe già affaticate dalla settimana di forza.",
+  },
+  {
+    day: "Sabato",
+    title: "Recupero Attivo",
+    zone: "Zona 1",
+    duration: "35–40 min",
+    icon: "bi-arrow-repeat",
+    desc: "Corsa molto facile (RPE 3–4) per smaltire la fatica accumulata durante la settimana, senza aggiungere stimolo allenante significativo.",
+  },
+  {
+    day: "Domenica",
+    title: "Long Run",
+    zone: "Zona 2",
+    duration: "70–90 min",
+    icon: "bi-map",
+    desc: "Lo stimolo aerobico più importante della settimana. Costruisce la base di resistenza e la capacità di utilizzare i grassi come substrato su lunga durata.",
+  },
+];
+
+const RUN_MECHANICS = [
+  {
+    title: "Cadenza",
+    icon: "bi-speedometer",
+    desc: "Range target 170–180 passi al minuto, per ridurre l'impatto su ginocchia e anche (overstriding).",
+  },
+  {
+    title: "Postura",
+    icon: "bi-person-arms-up",
+    desc: "Busto leggermente inclinato in avanti dalla caviglia, sguardo all'orizzonte, core attivo.",
+  },
+  {
+    title: "Appoggio",
+    icon: "bi-shoe-heel",
+    desc: "Non forzare l'avampiede: lavorare sulla cadenza normalizza naturalmente il punto di contatto al suolo.",
+  },
+];
+
+const RUN_PROGRESSION = [
+  {
+    title: "Regola del 10%",
+    icon: "bi-graph-up",
+    color: "text-info",
+    desc: "Non aumentare il volume settimanale totale di corsa oltre il 10% rispetto alla settimana precedente.",
+  },
+  {
+    title: "Cutback Week",
+    icon: "bi-arrow-down-circle",
+    color: "text-warning",
+    desc: "Ogni 4 settimane (settimana di Scarico del mesociclo) il volume di corsa scende del 20–30% per favorire il recupero sistemico.",
+  },
+  {
+    title: "Leve del Volume",
+    icon: "bi-sliders",
+    color: "text-success",
+    desc: "Ordine di priorità per aumentare il carico: 1) allungare il Long Run domenicale, 2) allungare le corse facili, 3) solo infine aumentare l'intensità delle sessioni di qualità.",
+  },
+];
+
+// ===== RECUPERO FISICO =====
+const RECOVERY_NUTRITION = [
+  {
+    title: "Carboidrati — giorni normali",
+    icon: "bi-egg-fried",
+    value: "3–6 g/kg/die",
+    desc: "Quota giornaliera essenziale per sostenere le sessioni in Zona 4 e il recupero tra gli allenamenti.",
+  },
+  {
+    title: "Carboidrati — Long Run",
+    icon: "bi-battery-charging",
+    value: "fino a 8 g/kg/die",
+    desc: "Nei giorni con Long Run domenicale il fabbisogno di carboidrati aumenta per garantire glicogeno sufficiente.",
+  },
+  {
+    title: "Sodio in corsa lunga",
+    icon: "bi-droplet-half",
+    value: "300–700 mg/ora",
+    desc: "Obbligatorio integrare sodio per corse oltre 75–90 minuti, per prevenire crampi e iponatriemia.",
+  },
+];
+
+const RECOVERY_MONITORING = [
+  {
+    title: "Frequenza Cardiaca a Riposo (FCR)",
+    icon: "bi-heart-pulse",
+    desc: "Misurata al risveglio. Un aumento persistente rispetto alla propria baseline è un segnale precoce di stress accumulato o recupero incompleto.",
+  },
+  {
+    title: "HRV (Variabilità della Frequenza Cardiaca)",
+    icon: "bi-activity",
+    desc: "Un HRV in calo per più giorni consecutivi suggerisce di ridurre l'intensità e privilegiare sessioni in Zona 1–2 fino al ripristino dei valori normali.",
+  },
+  {
+    title: "Overreaching",
+    icon: "bi-exclamation-diamond",
+    desc: "Il monitoraggio combinato di FCR e HRV aiuta a distinguere la normale fatica da allenamento da un sovraccarico che richiede scarico immediato.",
+  },
+];
+
+const RECOVERY_PRINCIPLES = [
+  {
+    title: "Sonno",
+    icon: "bi-moon-stars",
+    desc: "È la leva di recupero più potente a disposizione: priorità a orari regolari e durata sufficiente, soprattutto nelle settimane di Picco.",
+  },
+  {
+    title: "Recupero Attivo",
+    icon: "bi-arrow-repeat",
+    desc: "Il Sabato in Zona 1 non è un giorno 'perso': favorisce il flusso sanguigno e smaltisce metaboliti senza creare nuovo stress.",
+  },
+  {
+    title: "Stretching & Mobilità",
+    icon: "bi-bandaid",
+    desc: "Dinamico prima (warm-up), statico dopo (cool-down): vedi il modulo Prevenzione per i dettagli tecnici.",
+  },
+  {
+    title: "Cutback Week",
+    icon: "bi-battery-half",
+    desc: "La riduzione di volume del 20–30% nella settimana 4 del mesociclo è parte integrante della programmazione, non un'eccezione.",
+  },
+];
+
+function save() {
+  state._storageVersion = STORAGE_VERSION;
+  state.lastSavedAt = new Date().toISOString();
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    updateSaveIndicator("ok");
+  } catch (e) {
+    console.error(e);
+    updateSaveIndicator("error");
+  }
+  // scrittura nativa asincrona, non blocca l'interfaccia
+  if (NativeStorage.isNative()) {
+    NativeStorage.write(state).catch((e) =>
+      console.error("Errore salvataggio nativo", e),
+    );
+  }
+  // sincronizzazione cloud (debounced, non blocca l'interfaccia)
+  CloudSync.scheduleUpload();
+  updateMini();
+}
+
+function updateSaveIndicator(status) {
+  const el = document.getElementById("saveStatus");
+  if (!el) return;
+  if (status === "error") {
+    el.textContent = "Salvataggio: errore";
+    el.className =
+      "badge bg-danger bg-opacity-25 text-danger border border-danger w-100 mt-2 py-2";
+    return;
+  }
+  el.textContent = state.lastSavedAt
+    ? "Salvato " +
+      new Date(state.lastSavedAt).toLocaleTimeString("it-IT", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "Storage locale attivo";
+  el.className =
+    "badge bg-success bg-opacity-25 text-success border border-success w-100 mt-2 py-2";
+}
+
+function esc(v) {
+  return String(v ?? "").replace(
+    /[&<>"']/g,
+    (m) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[m],
+  );
+}
+function levelFromScore(s) {
+  if (s <= 6) return "Principiante";
+  if (s <= 12) return "Intermedio";
+  if (s <= 17) return "Avanzato";
+  return "Élite";
+}
+function scoreRanges(v, type) {
+  const n = Number(v);
+  if (type === "push") return n >= 30 ? 4 : n >= 10 ? 2 : 0;
+  if (type === "pull") return n >= 10 ? 4 : n >= 3 ? 2 : 0;
+  if (type === "squat") return n >= 45 ? 4 : n >= 25 ? 2 : 0;
+  if (type === "plank") return n >= 150 ? 4 : n >= 60 ? 2 : 0;
+  if (type === "run") return n < 22 ? 4 : n <= 29 ? 2 : 0;
+  return 0;
+}
+
+// ===== LOG ATTIVITÀ / STREAK / STATISTICHE =====
+function todayKey(d) {
+  const dt = d || new Date();
+  return (
+    dt.getFullYear() +
+    "-" +
+    String(dt.getMonth() + 1).padStart(2, "0") +
+    "-" +
+    String(dt.getDate()).padStart(2, "0")
+  );
+}
+
+function addLog(type, label, meta) {
+  state.log.push({
+    date: todayKey(),
+    type, // 'strength' | 'run'
+    label: label || "",
+    meta: meta || null,
+    at: new Date().toISOString(),
+  });
+  save();
+}
+
+function logRun(category, dayLabel) {
+  addLog("run", category, { day: dayLabel });
+  toast(`Corsa registrata: ${category}`);
+  render();
+}
+
+function toast(msg) {
+  const el = document.createElement("div");
+  el.className =
+    "toast align-items-center text-bg-success border-0 position-fixed end-0 m-3 show";
+  el.style.zIndex = 2000;
+  el.style.bottom = "150px";
+  el.innerHTML = `<div class="d-flex"><div class="toast-body"><i class="bi bi-check-circle me-2"></i>${esc(msg)}</div></div>`;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 2200);
+}
+
+function logDatesSet(typeFilter) {
+  const map = {};
+  state.log.forEach((l) => {
+    if (typeFilter && l.type !== typeFilter) return;
+    map[l.date] = (map[l.date] || 0) + 1;
+  });
+  if (!typeFilter || typeFilter === "strength") {
+    // include legacy strength sessions saved before logging existed
+    Object.values(state.sessions).forEach((s) => {
+      if (!s.at) return;
+      const k = todayKey(new Date(s.at));
+      const alreadyCounted = state.log.some(
+        (l) => l.date === k && l.type === "strength" && l.label === s.name,
+      );
+      if (!alreadyCounted) map[k] = (map[k] || 0) + 1;
+    });
+  }
+  return map;
+}
+
+function computeStreaks(typeFilter) {
+  const map = logDatesSet(typeFilter);
+  const days = Object.keys(map).sort();
+  if (!days.length) return { current: 0, best: 0 };
+
+  let best = 1,
+    run = 1;
+  for (let i = 1; i < days.length; i++) {
+    const prev = new Date(days[i - 1]);
+    const cur = new Date(days[i]);
+    const diff = Math.round((cur - prev) / 86400000);
+    if (diff === 1) {
+      run++;
+    } else if (diff > 1) {
+      run = 1;
+    }
+    best = Math.max(best, run);
+  }
+
+  // current streak: walk backwards from today (o ieri, per non azzerare subito se non ci si è ancora allenati oggi)
+  let current = 0;
+  let cursor = new Date();
+  cursor.setHours(0, 0, 0, 0);
+  if (!map[todayKey(cursor)]) {
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  while (map[todayKey(cursor)]) {
+    current++;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return { current, best };
+}
+
+function runDurationMinutes(title) {
+  const s = RUN_SESSIONS.find((r) => r.title === title);
+  if (!s) return 0;
+  const m = s.duration.match(/(\d+)/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+function runStatsThisWeek() {
+  const now = new Date();
+  const start = new Date(now);
+  start.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  start.setHours(0, 0, 0, 0);
+  const runs = state.log.filter((l) => {
+    if (l.type !== "run") return false;
+    const d = new Date(l.date);
+    return d >= start;
+  });
+  const minutes = runs.reduce(
+    (sum, r) => sum + runDurationMinutes(r.type === "run" ? r.label : ""),
+    0,
+  );
+  return { count: runs.length, minutes };
+}
+
+function runCategoryCountThisMonth(category) {
+  const now = new Date();
+  return state.log.filter((l) => {
+    if (l.type !== "run" || l.label !== category) return false;
+    const d = new Date(l.date);
+    return (
+      d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()
+    );
+  }).length;
+}
+
+function sessionsByWeek(nWeeks) {
+  const map = logDatesSet();
+  const labels = [],
+    values = [];
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  for (let w = nWeeks - 1; w >= 0; w--) {
+    const start = new Date(now);
+    start.setDate(start.getDate() - start.getDay() - 7 * w + 1);
+    let count = 0;
+    for (let d = 0; d < 7; d++) {
+      const dd = new Date(start);
+      dd.setDate(start.getDate() + d);
+      count += map[todayKey(dd)] || 0;
+    }
+    labels.push(
+      start.toLocaleDateString("it-IT", {
+        day: "2-digit",
+        month: "2-digit",
+      }),
+    );
+    values.push(count);
+  }
+  return { labels, values };
+}
+
+function countsByType() {
+  let strength = 0,
+    run = 0;
+  state.log.forEach((l) => {
+    if (l.type === "strength") strength++;
+    else if (l.type === "run") run++;
+  });
+  Object.values(state.sessions).forEach((s) => {
+    const k = todayKey(new Date(s.at || Date.now()));
+    const alreadyCounted = state.log.some(
+      (l) => l.date === k && l.type === "strength" && l.label === s.name,
+    );
+    if (!alreadyCounted) strength++;
+  });
+  return { strength, run };
+}
+
+function weeklyAvgRpe(nWeeks) {
+  const buckets = {};
+  Object.entries(state.sessions).forEach(([k, v]) => {
+    if (!v.at || !v.sets?.length) return;
+    const d = new Date(v.at);
+    const start = new Date(d);
+    start.setDate(d.getDate() - d.getDay() + 1);
+    const wk = todayKey(start);
+    const rpes = v.sets.map((s) => +s.rpe).filter(Boolean);
+    if (!rpes.length) return;
+    if (!buckets[wk]) buckets[wk] = [];
+    buckets[wk].push(...rpes);
+  });
+  const keys = Object.keys(buckets).sort().slice(-nWeeks);
+  return {
+    labels: keys.map((k) =>
+      new Date(k).toLocaleDateString("it-IT", {
+        day: "2-digit",
+        month: "2-digit",
+      }),
+    ),
+    values: keys.map((k) => {
+      const arr = buckets[k];
+      return +(arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(1);
+    }),
+  };
+}
+
+function monthSessionsCount(year, month) {
+  const map = logDatesSet();
+  let total = 0;
+  Object.entries(map).forEach(([k, v]) => {
+    const d = new Date(k);
+    if (d.getFullYear() === year && d.getMonth() === month) total += v;
+  });
+  return total;
+}
+
+function route(page) {
+  state.activePage = page;
+  save();
+  render();
+}
+
+function pageHead(title, sub) {
+  const currentWeek = WEEK[state.meso.week];
+  return `
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+    <div>
+      <h1 class="h2 fw-bold mb-1">${title}</h1>
+      <p class="text-secondary mb-0">${sub}</p>
+    </div>
+    <div>
+      <span class="badge ${currentWeek.badge} px-3 py-2 fs-6">
+        W${state.meso.week} · ${currentWeek.name}
+      </span>
+    </div>
+  </div>`;
+}
+
+function render() {
+  const navItems = [
+    { id: "dashboard", label: "Dashboard", icon: "speedometer2" },
+    { id: "assessment", label: "Assessment", icon: "clipboard-check" },
+    { id: "mesociclo", label: "Mesociclo", icon: "calendar3" },
+    { id: "workout", label: "Allenamento", icon: "lightning-charge" },
+    { id: "statistiche", label: "Statistiche", icon: "bar-chart-line" },
+    { id: "progressi", label: "Peso & Foto", icon: "camera" },
+    { id: "cardio", label: "Cardio & Zone", icon: "heart-pulse" },
+    { id: "corsa", label: "Programma Corsa", icon: "map" },
+    { id: "library", label: "Libreria", icon: "journal-bookmark" },
+    { id: "core", label: "Core", icon: "shield-shaded" },
+    { id: "prevenzione", label: "Prevenzione", icon: "bandaid" },
+    {
+      id: "recupero",
+      label: "Recupero Fisico",
+      icon: "battery-charging",
+    },
+    { id: "retest", label: "Re-test", icon: "arrow-repeat" },
+    { id: "settings", label: "Impostazioni", icon: "gear" },
+  ];
+
+  document.getElementById("nav").innerHTML = navItems
+    .map(
+      (item) => `
+    <button class="nav-link text-start py-2 px-3 d-flex align-items-center gap-2 ${state.activePage === item.id ? "active bg-primary text-white" : "text-secondary"}" onclick="route('${item.id}')">
+      <i class="bi bi-${item.icon}"></i> <span>${item.label}</span>
+    </button>
+  `,
+    )
+    .join("");
+
+  const directBottomIds = ["dashboard", "workout", "corsa", "statistiche"];
+  const bottomItems = [
+    { id: "dashboard", label: "Home", icon: "house-door-fill" },
+    { id: "workout", label: "Allena", icon: "lightning-charge-fill" },
+    { id: "corsa", label: "Corsa", icon: "map-fill" },
+    { id: "statistiche", label: "Stats", icon: "bar-chart-fill" },
+    {
+      id: "menu",
+      label: "Menu",
+      icon: "grid-3x3-gap-fill",
+      action: "menu",
+    },
+  ];
+  const bottomNavEl = document.getElementById("bottomNav");
+  if (bottomNavEl) {
+    bottomNavEl.innerHTML = bottomItems
+      .map((item) => {
+        const isActive =
+          item.action === "menu"
+            ? !directBottomIds.includes(state.activePage)
+            : state.activePage === item.id;
+        const onclick =
+          item.action === "menu" ? "openFullMenu()" : `route('${item.id}')`;
+        return `
+    <button class="bottom-nav-item ${isActive ? "active" : ""}" onclick="${onclick}">
+      <i class="bi bi-${item.icon}"></i>${isActive ? `<span>${item.label}</span>` : ""}
+    </button>`;
+      })
+      .join("");
+  }
+
+  const views = {
+    dashboard,
+    assessment: () => assessHTML() + scoreCard(),
+    mesociclo,
+    workout,
+    statistiche,
+    progressi: progressiPage,
+    cardio,
+    corsa: corsaPage,
+    library,
+    core: corePage,
+    prevenzione,
+    recupero: recuperoPage,
+    retest,
+    settings,
+  };
+
+  const view = views[state.activePage] || dashboard;
+  document.getElementById("app").innerHTML = view();
+  updateMini();
+  if (state.activePage === "statistiche") {
+    setTimeout(renderStatsCharts, 50);
+  }
+  if (state.activePage === "workout") {
+    setTimeout(renderPatternChips, 30);
+  }
+  if (state.activePage === "progressi") {
+    setTimeout(renderProgressChart, 50);
+  }
+}
+
+function updateMini() {
+  const elLvl = document.getElementById("miniLevel");
+  const elId = document.getElementById("miniId");
+  if (elLvl)
+    elLvl.textContent = state.profile
+      ? state.profile.level
+      : "Profilo non configurato";
+  if (elId)
+    elId.textContent = state.profile
+      ? state.profile.id
+      : "Completa l’assessment";
+}
+
+function dayCompletion(i) {
+  const day = SCHEDULE[i];
+  if (day.patterns.length) {
+    return day.patterns.every(
+      (p) => !!state.sessions["w" + state.meso.week + "-" + i + "-" + p],
+    );
+  }
+  return state.log.some((l) => l.type === "run" && l.date === todayKey());
+}
+
+function dayTimeHint(i) {
+  const day = SCHEDULE[i];
+  if (day.patterns.length && day.cardio === "Nessun cardio")
+    return "Sessione forza";
+  if (!day.patterns.length) return "Corsa · " + day.cardio;
+  return "Forza + Corsa";
+}
+
+function todayIndex() {
+  return (new Date().getDay() + 6) % 7;
+}
+
+// Mappa giorno-schedule -> titolo sessione di corsa corrispondente (RUN_SESSIONS)
+const RUN_FOR_DAY_INDEX = {
+  1: "Easy Run", // Martedì
+  2: "Interval Run", // Mercoledì
+  3: "Easy Run", // Giovedì
+  4: "Corsa Progressiva", // Venerdì
+  5: "Recupero Attivo", // Sabato
+  6: "Long Run", // Domenica
+};
+
+// ===== WIDGET CONDIVISO "OGGI" =====
+// Vera interconnessione tra tab: mostra stato reale (forza/corsa/streak)
+// e permette di AGIRE (aprire la sessione, registrare la corsa) restando
+// sulla pagina corrente. È incorporato in Allenamento, Corsa, Cardio e
+// Recupero, così le azioni fatte da una tab aggiornano subito lo stato
+// visibile nelle altre (Dashboard, Statistiche) senza dover navigare.
+function todayContextCard() {
+  const tIdx = todayIndex();
+  const day = SCHEDULE[tIdx];
+  const strengthDone = day.patterns.length ? dayCompletion(tIdx) : null;
+  const runTitle = RUN_FOR_DAY_INDEX[tIdx] || null;
+  const runDoneToday = runTitle
+    ? state.log.some(
+        (l) =>
+          l.type === "run" && l.label === runTitle && l.date === todayKey(),
+      )
+    : null;
+  const streaks = computeStreaks();
+
+  return `
+  <div class="card card-custom p-3 mb-4">
+    <div class="d-flex flex-wrap align-items-center gap-3">
+      <div class="flex-grow-1" style="min-width:180px">
+        <div class="text-secondary small text-uppercase mb-1"><i class="bi bi-calendar-event me-1"></i> Oggi · ${day.day}</div>
+        <div class="fw-bold text-white">${esc(day.title)}</div>
+      </div>
+
+      ${
+        day.patterns.length
+          ? `
+      <div class="d-flex align-items-center gap-2">
+        <span class="badge ${strengthDone ? "bg-success" : "bg-secondary"}"><i class="bi ${strengthDone ? "bi-check-lg" : "bi-hourglass-split"} me-1"></i>Forza</span>
+        <button class="btn btn-sm btn-outline-light" onclick="openDay(${tIdx})">${strengthDone ? "Rivedi" : "Apri"} <i class="bi bi-arrow-right"></i></button>
+      </div>`
+          : ""
+      }
+
+      ${
+        runTitle
+          ? `
+      <div class="d-flex align-items-center gap-2">
+        <span class="badge ${runDoneToday ? "bg-success" : "bg-secondary"}"><i class="bi ${runDoneToday ? "bi-check-lg" : "bi-hourglass-split"} me-1"></i>${esc(runTitle)}</span>
+        ${
+          runDoneToday
+            ? ""
+            : `<button class="strava-btn" style="padding:6px 14px;font-size:.8rem" onclick="logRun('${runTitle.replace(/'/g, "\\'")}', '${day.day.replace(/'/g, "\\'")}')"><i class="bi bi-play-fill me-1"></i>Registra</button>`
+        }
+      </div>`
+          : ""
+      }
+
+      <div class="d-flex align-items-center gap-1 text-warning fw-bold ms-auto" role="button" onclick="route('statistiche')" title="Vai alle statistiche">
+        <i class="bi bi-fire"></i> ${streaks.current}
+      </div>
+    </div>
+  </div>`;
+}
+
+function dashboard() {
+  const p = state.profile;
+  if (!p)
+    return (
+      pageHead("Hybrid Training System", "Motore operativo") +
+      `
+    <div class="card card-custom p-4">
+      <h3>Parti dall’Assessment</h3>
+      <p class="text-secondary">Prima del primo allenamento crea il profilo di ingresso. Senza profile ID la progressione resta bloccata.</p>
+      <div><button class="btn btn-primary" onclick="route('assessment')"><i class="bi bi-play-circle me-1"></i> Apri Assessment</button></div>
+    </div>`
+    );
+
+  const week = WEEK[state.meso.week];
+  const sdone = Object.keys(state.sessions).filter((k) =>
+    k.startsWith("w" + state.meso.week + "-"),
+  ).length;
+  const promotion = state.meso.history.some(
+    (h) => h.week === 3 && h.avgRpe < 7,
+  );
+  const streaks = computeStreaks();
+
+  const tIdx = todayIndex();
+  const tmrIdx = (tIdx + 1) % 7;
+  const todayDay = SCHEDULE[tIdx];
+  const tmrDay = SCHEDULE[tmrIdx];
+  const todayDone = dayCompletion(tIdx);
+  const tmrDone = dayCompletion(tmrIdx);
+  const pct = Math.min(100, Math.round((sdone / 5) * 100));
+  const dateLabel = new Date()
+    .toLocaleDateString("it-IT", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    })
+    .replace(/^./, (c) => c.toUpperCase());
+  const initials = (p.id || "U").slice(0, 2).toUpperCase();
+
+  return (
+    `
+  <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <div class="d-flex align-items-center gap-3">
+      <div class="avatar-circle">${esc(initials)}</div>
+      <div>
+        <div class="text-secondary small">Ciao! 👋</div>
+        <div class="h5 fw-bold mb-0 text-white">${esc(p.id)}</div>
+      </div>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+      <span class="badge ${week.badge} px-3 py-2 fs-6 d-none d-sm-inline-block">W${state.meso.week} · ${week.name}</span>
+      <div class="bell-btn" role="button" onclick="route('statistiche')">
+        <i class="bi bi-bell-fill"></i>
+        ${streaks.current > 0 ? `<span class="bell-dot"></span>` : ""}
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-md-6">
+      <div class="hero-card hero-card-orange">
+        <div class="d-flex justify-content-between align-items-start">
+          <h5 class="fw-bold mb-0">Piano<br />Allenamento</h5>
+          <div class="hero-icon-btn"><i class="bi bi-magic"></i></div>
+        </div>
+        <div class="checklist-pill ${todayDone ? "done" : ""}" role="button" onclick="openDay(${tIdx})">
+          <div class="checklist-check ${todayDone ? "done" : ""}">${todayDone ? '<i class="bi bi-check-lg"></i>' : ""}</div>
+          <div class="flex-grow-1">
+            <div class="fw-bold small">${esc(todayDay.title)}</div>
+            <div class="small" style="opacity:.85">Oggi · ${esc(dayTimeHint(tIdx))}</div>
+          </div>
+        </div>
+        <div class="checklist-pill ${tmrDone ? "done" : ""}" role="button" onclick="openDay(${tmrIdx})">
+          <div class="checklist-check ${tmrDone ? "done" : ""}">${tmrDone ? '<i class="bi bi-check-lg"></i>' : ""}</div>
+          <div class="flex-grow-1">
+            <div class="fw-bold small">${esc(tmrDay.title)}</div>
+            <div class="small" style="opacity:.85">Domani · ${esc(dayTimeHint(tmrIdx))}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6">
+      <div class="hero-card hero-card-blue">
+        <div class="small fw-semibold" style="opacity:.75">${esc(dateLabel)}</div>
+        <h4 class="fw-bold mt-1 mb-3">Inizia il tuo<br />Allenamento di Oggi</h4>
+        <button class="start-pill-btn" onclick="${todayDay.patterns.length ? `openDay(${tIdx})` : `route('corsa')`}">
+          Start <span class="play-dot"><i class="bi bi-play-fill"></i></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-md-6">
+      <div class="progress-ring-card h-100">
+        <div class="ring-icon-circle"><i class="bi ${todayDay.patterns.length ? "bi-lightning-charge-fill" : "bi-map-fill"}"></i></div>
+        <div class="flex-grow-1">
+          <div class="fw-bold">${esc(todayDay.title)}</div>
+          <div class="small text-secondary">${sdone} di 5 sessioni completate</div>
+        </div>
+        <div class="ring" style="--pct:${pct}">
+          <div class="ring-inner">${pct}%</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6">
+      <div class="card card-custom p-3 h-100 d-flex flex-row align-items-center gap-3" role="button" onclick="route('statistiche')">
+        <div class="ring-icon-circle" style="background:var(--accent-blue-2)"><i class="bi bi-fire"></i></div>
+        <div class="flex-grow-1">
+          <div class="fw-bold text-white">Streak: ${streaks.current} giorni</div>
+          <div class="small text-secondary">Record: ${streaks.best} gg · vedi le Statistiche <i class="bi bi-arrow-right"></i></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card card-custom p-3 mb-4">
+    <h5 class="mb-3">Attività di Oggi</h5>
+    ${[tIdx, tmrIdx]
+      .map((idx, pos) => {
+        const day = SCHEDULE[idx];
+        const done = dayCompletion(idx);
+        const isLast = pos === 1;
+        return `
+    <div class="timeline-row">
+      <div class="timeline-dot-col">
+        <div class="timeline-dot ${done ? "filled" : ""}"></div>
+        ${!isLast ? '<div class="timeline-line"></div>' : ""}
+      </div>
+      <div class="flex-grow-1">
+        <div class="fw-bold text-white">${esc(day.title)}</div>
+        <div class="small text-secondary">${esc(day.day)} · ${esc(dayTimeHint(idx))}</div>
+      </div>
+      ${
+        pos === 0
+          ? `<button class="now-pill" onclick="openDay(${idx})">Ora</button>`
+          : `<span class="text-secondary small">${esc(day.day)}</span>`
+      }
+    </div>`;
+      })
+      .join("")}
+  </div>` +
+    `
+  ${
+    promotion
+      ? `
+    <div class="alert alert-success border-0 bg-success bg-opacity-10 text-success mb-4">
+      <i class="bi bi-star-fill me-2"></i><strong>Promozione livello consigliata.</strong> Settimana 3 completata con RPE medio &lt; 7: dal prossimo mesociclo è disponibile la colonna superiore.
+    </div>`
+      : `
+    <div class="alert alert-info border-0 bg-info bg-opacity-10 text-info mb-4">
+      <i class="bi bi-info-circle-fill me-2"></i>Regola primaria: <strong>Forza prima della corsa</strong>. Il cardio facile si sblocca solo dopo il completamento del modulo forza previsto.
+    </div>`
+  }
+
+  <div class="card card-custom p-3">
+    <h5 class="card-title mb-3">Microciclo Settimana ${state.meso.week}</h5>
+    <div class="table-responsive">
+      <table class="table table-dark table-hover align-middle mb-0">
+        <thead class="text-secondary">
+          <tr><th>Giorno</th><th>Sessione</th><th>Focus</th><th>Cardio</th><th></th></tr>
+        </thead>
+        <tbody>
+          ${SCHEDULE.map(
+            (x, i) => `
+            <tr>
+              <td><span class="badge bg-secondary">${x.day}</span></td>
+              <td><strong>${x.title}</strong></td>
+              <td class="text-secondary">${x.focus}</td>
+              <td><span class="badge bg-dark border text-light">${x.cardio}</span></td>
+              <td class="text-end"><button class="btn btn-sm btn-outline-light" onclick="openDay(${i})">Apri <i class="bi bi-arrow-right"></i></button></td>
+            </tr>`,
+          ).join("")}
+        </tbody>
+      </table>
+    </div>
+  </div>`
+  );
+}
+
+function assessHTML() {
+  return `
+  <div class="card card-custom p-4 mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h3 class="h4 mb-0">Assessment Iniziale</h3>
+      <span class="badge bg-primary">5 test · 20 punti</span>
+    </div>
+    <p class="text-secondary">Il punteggio è un filtro iniziale per il database. Completa i test con tecnica pulita, poi salva.</p>
+    
+    <div class="row g-3 mb-3">
+      ${[
+        ["push", "Push-up", "ripetizioni"],
+        ["pull", "Pull-up / Hang", "ripetizioni pull-up"],
+        ["squat", "Squat 1 min", "ripetizioni"],
+        ["plank", "Plank", "secondi"],
+        ["run", "Corsa 5 km", "minuti"],
+      ]
+        .map(
+          ([k, l, p]) => `
+        <div class="col-12 col-md-4">
+          <label class="form-label text-secondary small">${l}</label>
+          <input id="a_${k}" type="number" class="form-control bg-dark text-light border-secondary" placeholder="${p}">
+        </div>
+      `,
+        )
+        .join("")}
+    </div>
+
+    <div class="row g-3 mb-4">
+      <div class="col-12 col-md-4">
+        <label class="form-label text-secondary small">Altezza (cm)</label>
+        <input id="a_h" type="number" class="form-control bg-dark text-light border-secondary" placeholder="175">
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label text-secondary small">Peso (kg)</label>
+        <input id="a_w" type="number" step="0.1" class="form-control bg-dark text-light border-secondary" placeholder="66">
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label text-secondary small">FC max misurata (bpm)</label>
+        <input id="a_hrmax" type="number" class="form-control bg-dark text-light border-secondary" placeholder="opzionale">
+      </div>
+    </div>
+
+    <div>
+      <button class="btn btn-primary" onclick="runAssessment()"><i class="bi bi-check-circle me-1"></i> Calcola Profile ID</button>
+    </div>
+  </div>`;
+}
+
+function runAssessment() {
+  const vals = {
+    push: +document.getElementById("a_push").value || 0,
+    pull: +document.getElementById("a_pull").value || 0,
+    squat: +document.getElementById("a_squat").value || 0,
+    plank: +document.getElementById("a_plank").value || 0,
+    run: +document.getElementById("a_run").value || 0,
+  };
+  const score = Object.entries(vals).reduce(
+    (s, [k, v]) => s + scoreRanges(v, k),
+    0,
+  );
+  const profileId =
+    "HTS-" +
+    [score, vals.push, vals.pull, vals.squat, vals.plank, vals.run]
+      .map((x) => Math.round(x))
+      .join("-");
+  state.profile = {
+    id: profileId,
+    level: levelFromScore(score),
+    score,
+    createdAt: new Date().toISOString(),
+    height: +document.getElementById("a_h").value || null,
+    weight: +document.getElementById("a_w").value || null,
+    hrMax: +document.getElementById("a_hrmax").value || null,
+  };
+  state.assessment = vals;
+  state.meso = {
+    week: 1,
+    started: new Date().toISOString(),
+    history: [],
+  };
+  save();
+  route("dashboard");
+}
+
+function scoreCard() {
+  if (!state.profile) return "";
+  const p = state.profile;
+  return `
+  <div class="card card-custom p-4">
+    <h4 class="h5 mb-3">Profilo Utente</h4>
+    <div class="row g-3">
+      <div class="col-12 col-md-4">
+        <span class="text-secondary small">Livello Tecnico</span>
+        <div class="h4 text-info fw-bold mt-1">${p.level}</div>
+      </div>
+      <div class="col-12 col-md-4">
+        <span class="text-secondary small">Profile ID Generato</span>
+        <div class="h5 text-light mt-1">${p.id}</div>
+      </div>
+      <div class="col-12 col-md-4">
+        <span class="text-secondary small">Dati Fisici</span>
+        <div class="small mt-1 text-secondary">Altezza: <strong class="text-light">${p.height || "—"} cm</strong> | Peso: <strong class="text-light">${p.weight || "—"} kg</strong></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function mesociclo() {
+  const w = WEEK[state.meso.week];
+  return (
+    pageHead(
+      "Tracker Mesociclo",
+      "Volume e RPE parametrizzati automaticamente",
+    ) +
+    `
+  <div class="row g-3 mb-4">
+    ${[1, 2, 3, 4]
+      .map(
+        (i) => `
+      <div class="col-12 col-sm-6 col-md-3">
+        <div class="card card-custom p-3 h-100 ${i === state.meso.week ? "border-primary" : ""}">
+          <span class="text-secondary small">Settimana ${i}</span>
+          <div class="metric-val text-white my-1">${Math.round(WEEK[i].volume * 100)}%</div>
+          <div><span class="badge ${WEEK[i].badge}">${WEEK[i].name}</span></div>
+          <div class="text-secondary small mt-2">Target RPE: ${WEEK[i].rpe}</div>
+        </div>
+      </div>
+    `,
+      )
+      .join("")}
+  </div>
+
+  <div class="card card-custom p-4 mb-4">
+    <h5 class="mb-3">Regole Adattive del Sistema</h5>
+    <div class="row g-3">
+      <div class="col-12 col-md-4">
+        <div class="p-3 border rounded-3 bg-dark bg-opacity-25 h-100">
+          <strong class="text-warning">RPE 10 (Cedimento)</strong>
+          <p class="text-secondary small mb-0 mt-1">Cedimento tecnico = primary flag. Il set termina; se ricorrente viene suggerita regressione.</p>
+        </div>
+      </div>
+      <div class="col-12 col-md-4">
+        <div class="p-3 border rounded-3 bg-dark bg-opacity-25 h-100">
+          <strong class="text-info">RPE manuale &gt; teorico</strong>
+          <p class="text-secondary small mb-0 mt-1">Il dato percepito ha priorità assoluta sul volume teorico quando i due confliggono.</p>
+        </div>
+      </div>
+      <div class="col-12 col-md-4">
+        <div class="p-3 border rounded-3 bg-dark bg-opacity-25 h-100">
+          <strong class="text-danger">Scarico Precauzionale</strong>
+          <p class="text-secondary small mb-0 mt-1">RPE 10 ricorrente su volumi bassi implica la riduzione del carico tecnico nella sessione successiva.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card card-custom p-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+      <div>
+        <p class="mb-0">Volume target attuale: <strong>${Math.round(w.volume * 100)}%</strong> | Target RPE: <strong>${w.rpe}</strong></p>
+      </div>
+      <div class="d-flex gap-2">
+        ${state.meso.week > 1 ? `<button class="btn btn-outline-light" onclick="changeWeek(-1)"><i class="bi bi-chevron-left"></i> Prec.</button>` : ""}
+        ${state.meso.week < 4 ? `<button class="btn btn-primary" onclick="changeWeek(1)">Succ. <i class="bi bi-chevron-right"></i></button>` : `<button class="btn btn-warning" onclick="completeMeso()">Chiudi Mesociclo</button>`}
+      </div>
+    </div>
+  </div>`
+  );
+}
+
+function changeWeek(delta) {
+  state.meso.week = Math.max(1, Math.min(4, state.meso.week + delta));
+  save();
+  render();
+}
+
+function completeMeso() {
+  const reps = Object.entries(state.sessions)
+    .filter(([k]) => k.startsWith("w3-"))
+    .flatMap(([, v]) => v.sets || [])
+    .map((s) => +s.rpe)
+    .filter(Boolean);
+  const avg = reps.length
+    ? reps.reduce((a, b) => a + b, 0) / reps.length
+    : null;
+  state.meso.history.push({ week: 3, avgRpe: avg });
+  state.meso.week = 1;
+  state.meso.started = new Date().toISOString();
+  save();
+  route("retest");
+}
+
+// REDESIGNED WORKOUT UI FOR IMPROVED UX & TOUCH USABILITY
+function workout() {
+  if (!state.profile)
+    return (
+      pageHead("Allenamento", "Profilo richiesto") +
+      `
+    <div class="card card-custom p-4">
+      <p>Completa l'Assessment per sbloccare il generatore di allenamento.</p>
+      <div><button class="btn btn-primary" onclick="route('assessment')">Vai all'Assessment</button></div>
+    </div>`
+    );
+
+  return (
+    pageHead(
+      "Allenamento",
+      "Forza prima della corsa · Tracker Set-by-Set Interattivo",
+    ) +
+    todayContextCard() +
+    `
+  <div class="card card-custom p-4 mb-4">
+    <div class="row g-3">
+      <div class="col-12 col-md-5">
+        <label class="form-label text-secondary small">Seleziona Giorno</label>
+        <select id="wday" class="form-select bg-dark text-light border-secondary" onchange="renderPatternChips()">
+          ${SCHEDULE.map(
+            (x, i) =>
+              `<option value="${i}" ${i === todayIndex() ? "selected" : ""}>${x.day} · ${x.title}</option>`,
+          ).join("")}
+        </select>
+      </div>
+      <div class="col-12 col-md-7">
+        <label class="form-label text-secondary small">Pattern Movimento · tocca per iniziare subito</label>
+        <div id="patChips" class="d-flex flex-wrap gap-2"></div>
+        <input type="hidden" id="wpat" value="" />
+      </div>
+    </div>
+  </div>
+
+  <div id="generated"></div>`
+  );
+}
+
+function renderPatternChips() {
+  const el = document.getElementById("patChips");
+  const daySel = document.getElementById("wday");
+  if (!el || !daySel) return;
+  const dayIdx = +daySel.value;
+  const day = SCHEDULE[dayIdx];
+  const labels = {
+    push: "Push",
+    pull: "Pull",
+    squat: "Squat",
+    hinge: "Hinge",
+    shoulder: "Spalla",
+  };
+  if (!day.patterns.length) {
+    el.innerHTML = `<div class="text-secondary small py-2">Giorno di sola corsa: usa il FAB <i class="bi bi-plus-circle-fill text-danger"></i> in basso per registrarla.</div>`;
+    document.getElementById("generated").innerHTML = "";
+    return;
+  }
+  el.innerHTML = day.patterns
+    .map((p) => {
+      const done =
+        !!state.sessions["w" + state.meso.week + "-" + dayIdx + "-" + p];
+      return `
+    <button class="quick-link-pill ${done ? "active" : ""}" style="padding:11px 18px;font-size:.88rem" onclick="selectPattern(${dayIdx}, '${p}')">
+      <i class="bi ${done ? "bi-check-lg" : "bi-lightning-charge-fill"}"></i> ${labels[p]}
+    </button>`;
+    })
+    .join("");
+}
+
+function selectPattern(dayIdx, pat) {
+  document.getElementById("wday").value = dayIdx;
+  document.getElementById("wpat").value = pat;
+  renderPatternChips();
+  startWorkout();
+}
+
+function startWorkout() {
+  const pat = document.getElementById("wpat").value;
+  const list = LIB[pat];
+  const target = Math.min(
+    3,
+    Math.max(
+      0,
+      ["Principiante", "Intermedio", "Avanzato", "Élite"].indexOf(
+        state.profile.level,
+      ),
+    ),
+  );
+  const ex = list[target];
+  const key =
+    "w" +
+    state.meso.week +
+    "-" +
+    document.getElementById("wday").value +
+    "-" +
+    pat;
+
+  const cueText =
+    pat === "push"
+      ? "Mantenere il core stretto, non far cadere le anche."
+      : pat === "squat"
+        ? "Evitare il valgismo dinamico (ginocchia allineate con le punte)."
+        : pat === "pull"
+          ? "Nessun compenso di slancio, controllo scapolare."
+          : "Bacino stabile e colonna vertebrale in posizione neutra.";
+
+  const html = `
+  <div class="card card-custom p-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 border-bottom border-secondary pb-3 mb-4">
+      <div>
+        <span class="badge bg-primary mb-1">${esc(ex[1])}</span>
+        <h2 class="h3 fw-bold mb-1">${esc(ex[0])}</h2>
+        <span class="text-secondary small me-3"><i class="bi bi-tag"></i> ${ex[2]}</span>
+        <span class="text-secondary small me-3"><i class="bi bi-repeat"></i> ${ex[3]}</span>
+        <span class="text-info small"><i class="bi bi-clock"></i> ${ex[4]}</span>
+      </div>
+      <div class="d-flex gap-2">
+        <button class="btn btn-outline-info btn-sm" onclick="startTimer(90, 'Accessorio')"><i class="bi bi-stopwatch"></i> Rest 90s</button>
+        <button class="btn btn-outline-info btn-sm" onclick="startTimer(150, 'Neurale')"><i class="bi bi-stopwatch-fill"></i> Rest 150s</button>
+      </div>
+    </div>
+
+    <div class="alert alert-dark border border-secondary d-flex align-items-center gap-2 py-2 mb-4">
+      <i class="bi bi-lightbulb text-warning fs-5"></i>
+      <span class="small"><strong>Correttivo di Esecuzione:</strong> ${cueText}</span>
+    </div>
+
+    <div class="row g-3 mb-4">
+      ${[1, 2, 3, 4]
+        .map(
+          (_, i) => `
+        <div class="col-12 col-md-6">
+          <div class="set-card p-3">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <span class="fw-bold text-info"><i class="bi bi-layers"></i> SET ${i + 1}</span>
+              <button class="btn btn-sm btn-link text-secondary p-0 text-decoration-none" onclick="startTimer(120, 'Set ${i + 1}')">
+                <i class="bi bi-arrow-clockwise"></i> Timer 2m
+              </button>
+            </div>
+            <div class="row g-2">
+              <div class="col-6">
+                <label class="form-label text-secondary small mb-1">Ripetizioni</label>
+                <input type="number" min="0" class="form-control form-control-lg bg-dark text-light border-secondary text-center fw-bold" placeholder="0" id="${key}-rep-${i}">
+              </div>
+              <div class="col-6">
+                <label class="form-label text-secondary small mb-1">RPE Percepito</label>
+                <input type="number" min="0" max="10" step="0.5" class="form-control form-control-lg bg-dark text-light border-secondary text-center fw-bold text-warning" placeholder="6-10" id="${key}-rpe-${i}">
+              </div>
+              <div class="col-12 mt-2">
+                <select class="form-select form-select-sm bg-dark text-light border-secondary" id="${key}-status-${i}">
+                  <option value="Completo">✅ Esecuzione Pulita</option>
+                  <option value="Tecnica degradata">⚠️ Tecnica Degradata</option>
+                  <option value="Interrotto">❌ Set Interrotto / Cedimento</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+      `,
+        )
+        .join("")}
+    </div>
+
+    <div class="d-flex justify-content-end gap-2">
+      <button class="btn btn-success btn-lg px-4" onclick="saveWorkout('${key}', '${ex[0].replace(/'/g, "\\'")}')">
+        <i class="bi bi-check2-circle me-1"></i> Salvataggio Sessione
+      </button>
+    </div>
+  </div>`;
+
+  document.getElementById("generated").innerHTML = html;
+  state.__current = { key, ex };
+  save();
+}
+
+function saveWorkout(key, name) {
+  const sets = [0, 1, 2, 3]
+    .map((i) => ({
+      rpe: +(document.getElementById(key + "-rpe-" + i)?.value || 0),
+      reps: +(document.getElementById(key + "-rep-" + i)?.value || 0),
+      status:
+        document.getElementById(key + "-status-" + i)?.value || "Completo",
+      done: true,
+    }))
+    .filter((s) => s.rpe > 0 || s.reps > 0);
+
+  state.sessions[key] = { name, sets, at: new Date().toISOString() };
+  addLog("strength", name, { key });
+
+  const hasRpe10 = sets.some((s) => s.rpe >= 10);
+  const recurring = Object.values(state.sessions).some(
+    (s) => s.sets?.filter((x) => x.rpe >= 10).length >= 2,
+  );
+
+  const feedbackHtml = `
+    <div class="alert ${hasRpe10 ? "alert-danger" : "alert-success"} mt-3 mb-0 border-0" role="alert">
+      <h6 class="alert-heading fw-bold mb-1">
+        ${hasRpe10 ? '<i class="bi bi-exclamation-triangle-fill me-1"></i> RPE 10 Rilevato' : '<i class="bi bi-check-circle-fill me-1"></i> Sessione Registrata Con Successo'}
+      </h6>
+      <p class="mb-0 small">
+        ${hasRpe10 ? "Il set è stato terminato per cedimento tecnico in base alle regole adattive." : "I dati del microciclo sono stati salvati regolarmente."}
+        ${recurring ? " <strong>Attenzione:</strong> Rilevato pattern di RPE 10 ricorrente nelle ultime sessioni. La prossima sessione richiede una regressione tecnica o uno scarico precauzionale." : ""}
+      </p>
+    </div>`;
+
+  document
+    .getElementById("generated")
+    .insertAdjacentHTML("beforeend", feedbackHtml);
+}
+
+function cardio() {
+  const test = state.zoneTest;
+  return (
+    pageHead(
+      "Cardio & Zone",
+      "Test dei 30 minuti prioritario rispetto a 220−età",
+    ) +
+    todayContextCard() +
+    `
+  <div class="card card-custom p-4 mb-4">
+    <h4 class="h5 mb-3">Test 30 Minuti (FC Media ultimi 20')</h4>
+    <div class="row g-3">
+      <div class="col-12 col-md-4">
+        <label class="form-label text-secondary small">FC media ultimi 20 min (bpm)</label>
+        <input id="z_hr" type="number" min="1" class="form-control bg-dark text-light border-secondary">
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label text-secondary small">FC max misurata (bpm)</label>
+        <input id="z_max" type="number" min="1" class="form-control bg-dark text-light border-secondary" value="${state.profile?.hrMax || ""}">
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label text-secondary small">Ritmo medio (min/km)</label>
+        <input id="z_pace" class="form-control bg-dark text-light border-secondary" placeholder="es. 5:15">
+      </div>
+    </div>
+    <div class="mt-3">
+      <button class="btn btn-primary" onclick="saveZones()"><i class="bi bi-calculator me-1"></i> Calcola Zone Personalizzate</button>
+    </div>
+  </div>
+
+  ${
+    test
+      ? zonesHTML(test)
+      : `
+    <div class="alert alert-secondary border-0 bg-dark text-secondary">
+      <i class="bi bi-info-circle me-1"></i> Completa il test prima di usare le zone personalizzate. La formula 220−età viene mantenuta come fallback precauzionale.
+    </div>`
+  }
+
+  <div class="card card-custom p-4 mt-4">
+    <h5 class="card-title text-warning"><i class="bi bi-exclamation-triangle me-1"></i> Vincolo Corsa Facile</h5>
+    <p class="text-secondary small">Sessioni facili: Z1–Z2. Se la frequenza cardiaca supera Z3, l'applicazione genera un avviso di haptic alert/acustico per invitare a ridurre l'intensità.</p>
+    <div class="d-flex gap-2">
+      <button class="btn btn-outline-warning" onclick="zoneAlert()">Simula sconfinamento Z3</button>
+      <button class="btn btn-outline-light" onclick="beep()">Test Segnale Audio</button>
+    </div>
+  </div>`
+  );
+}
+
+function saveZones() {
+  const avg = +document.getElementById("z_hr").value || 0;
+  const max = +document.getElementById("z_max").value || Math.round(avg * 1.1);
+  if (!avg) return;
+  state.zoneTest = {
+    avg20: avg,
+    max,
+    pace: document.getElementById("z_pace").value || "",
+  };
+  save();
+  render();
+}
+
+function zonesHTML(t) {
+  const base = t.avg20;
+  const z1 = [Math.round(base * 0.75), Math.round(base * 0.8)];
+  const z2 = [Math.round(base * 0.8), Math.round(base * 0.85)];
+  const z3 = [Math.round(base * 0.85), Math.round(base * 0.9)];
+  const z4 = [Math.round(base * 0.9), Math.round(t.max)];
+
+  return `
+  <div class="row g-3">
+    ${[
+      ["Z1", "Recupero", z1, "border-info text-info"],
+      ["Z2", "Aerobica", z2, "border-success text-success"],
+      ["Z3", "Controllo", z3, "border-warning text-warning"],
+      ["Z4", "Soglia / VO₂max", z4, "border-danger text-danger"],
+    ]
+      .map(
+        (z) => `
+      <div class="col-12 col-sm-6 col-md-3">
+        <div class="card card-custom p-3 border ${z[3]}">
+          <span class="fw-bold">${z[0]} - ${z[1]}</span>
+          <div class="metric-val fs-4 mt-2 text-light">${z[2][0]}–${z[2][1]} <small class="fs-6 text-secondary">bpm</small></div>
+        </div>
+      </div>
+    `,
+      )
+      .join("")}
+  </div>`;
+}
+
+function statistiche() {
+  const { current, best } = computeStreaks();
+  const totalSessions =
+    state.log.length +
+    Object.values(state.sessions).length -
+    Object.values(state.sessions).filter((s) =>
+      state.log.some((l) => l.type === "strength" && l.label === s.name),
+    ).length;
+  const monthCount = monthSessionsCount(
+    state.statsView.year,
+    state.statsView.month,
+  );
+
+  const streakBadge =
+    current >= 7
+      ? "bg-danger"
+      : current >= 3
+        ? "bg-warning text-dark"
+        : "bg-secondary";
+
+  return (
+    pageHead(
+      "Statistiche & Progressi",
+      "Streak, heatmap mensile e andamento allenamenti",
+    ) +
+    `
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-sm-6 col-xl-3">
+      <div class="card card-custom p-3 h-100">
+        <span class="text-secondary small text-uppercase">Streak Corrente</span>
+        <div class="d-flex align-items-center gap-2 my-1">
+          <span class="metric-val text-white">${current}</span>
+          <span class="badge ${streakBadge}"><i class="bi bi-fire"></i> ${current === 0 ? "Riparti oggi" : current + "gg consecutivi"}</span>
+        </div>
+        <span class="text-secondary small">giorni di fila con almeno una sessione</span>
+      </div>
+    </div>
+    <div class="col-12 col-sm-6 col-xl-3">
+      <div class="card card-custom p-3 h-100">
+        <span class="text-secondary small text-uppercase">Record Streak</span>
+        <div class="metric-val text-warning my-1"><i class="bi bi-trophy-fill me-1"></i>${best}</div>
+        <span class="text-secondary small">miglior striscia mai raggiunta</span>
+      </div>
+    </div>
+    <div class="col-12 col-sm-6 col-xl-3">
+      <div class="card card-custom p-3 h-100">
+        <span class="text-secondary small text-uppercase">Sessioni Totali</span>
+        <div class="metric-val text-info my-1">${totalSessions}</div>
+        <span class="text-secondary small">forza + corsa, da sempre</span>
+      </div>
+    </div>
+    <div class="col-12 col-sm-6 col-xl-3">
+      <div class="card card-custom p-3 h-100">
+        <span class="text-secondary small text-uppercase">Questo Mese</span>
+        <div class="metric-val text-success my-1">${monthCount}</div>
+        <span class="text-secondary small">sessioni registrate nel mese</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card card-custom p-4 mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+      <h5 class="mb-0"><i class="bi bi-calendar3-week me-1"></i> Heatmap Mensile</h5>
+      <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-sm btn-outline-light" onclick="shiftStatsMonth(-1)"><i class="bi bi-chevron-left"></i></button>
+        <span class="fw-bold text-light">${monthLabel(state.statsView.year, state.statsView.month)}</span>
+        <button class="btn btn-sm btn-outline-light" onclick="shiftStatsMonth(1)"><i class="bi bi-chevron-right"></i></button>
+      </div>
+    </div>
+    ${heatmapHTML(state.statsView.year, state.statsView.month)}
+    <div class="d-flex align-items-center gap-2 mt-3 small text-secondary">
+      <span>Meno</span>
+      <span class="heat-swatch" style="background:rgba(98,212,255,.08)"></span>
+      <span class="heat-swatch" style="background:rgba(98,212,255,.35)"></span>
+      <span class="heat-swatch" style="background:rgba(98,212,255,.6)"></span>
+      <span class="heat-swatch" style="background:rgba(98,212,255,.9)"></span>
+      <span>Più</span>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-12 col-lg-6">
+      <div class="card card-custom p-3 h-100">
+        <h6 class="mb-3"><i class="bi bi-graph-up me-1"></i> Sessioni per Settimana (10 sett.)</h6>
+        <canvas id="chartWeekly" height="200"></canvas>
+      </div>
+    </div>
+    <div class="col-12 col-lg-6">
+      <div class="card card-custom p-3 h-100">
+        <h6 class="mb-3"><i class="bi bi-pie-chart me-1"></i> Forza vs Corsa</h6>
+        <canvas id="chartType" height="200"></canvas>
+      </div>
+    </div>
+    <div class="col-12">
+      <div class="card card-custom p-3 h-100">
+        <h6 class="mb-3"><i class="bi bi-activity me-1"></i> RPE Medio Settimanale (Forza)</h6>
+        <canvas id="chartRpe" height="120"></canvas>
+      </div>
+    </div>
+  </div>`
+  );
+}
+
+function monthLabel(year, month) {
+  return new Date(year, month, 1)
+    .toLocaleDateString("it-IT", { month: "long", year: "numeric" })
+    .replace(/^./, (c) => c.toUpperCase());
+}
+
+function shiftStatsMonth(delta) {
+  let m = state.statsView.month + delta;
+  let y = state.statsView.year;
+  if (m < 0) {
+    m = 11;
+    y--;
+  } else if (m > 11) {
+    m = 0;
+    y++;
+  }
+  state.statsView = { year: y, month: m };
+  save();
+  render();
+}
+
+function heatmapHTML(year, month) {
+  const map = logDatesSet();
+  const first = new Date(year, month, 1);
+  const startOffset = (first.getDay() + 6) % 7; // lunedì = 0
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const todayK = todayKey();
+
+  const cells = [];
+  for (let i = 0; i < startOffset; i++) {
+    cells.push(`<div class="heat-cell heat-empty"></div>`);
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateObj = new Date(year, month, d);
+    const k = todayKey(dateObj);
+    const count = map[k] || 0;
+    const alpha =
+      count === 0 ? 0.06 : count === 1 ? 0.35 : count === 2 ? 0.6 : 0.9;
+    const isToday = k === todayK ? "heat-today" : "";
+    cells.push(
+      `<div class="heat-cell ${isToday}" style="background:rgba(98,212,255,${alpha})" title="${k} · ${count} sessione/i">${d}</div>`,
+    );
+  }
+
+  return `
+  <div class="heat-grid heat-labels">
+    ${["L", "M", "M", "G", "V", "S", "D"].map((d) => `<div class="heat-label">${d}</div>`).join("")}
+  </div>
+  <div class="heat-grid">
+    ${cells.join("")}
+  </div>`;
+}
+
+let statsCharts = {};
+function renderStatsCharts() {
+  if (typeof Chart === "undefined") return;
+  Object.values(statsCharts).forEach((c) => c && c.destroy());
+  statsCharts = {};
+
+  const weekly = sessionsByWeek(10);
+  const cw = document.getElementById("chartWeekly");
+  if (cw) {
+    statsCharts.weekly = new Chart(cw, {
+      type: "line",
+      data: {
+        labels: weekly.labels,
+        datasets: [
+          {
+            label: "Sessioni",
+            data: weekly.values,
+            borderColor: "#62d4ff",
+            backgroundColor: "rgba(98,212,255,.15)",
+            fill: true,
+            tension: 0.35,
+            pointRadius: 3,
+          },
+        ],
+      },
+      options: {
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: "#9fb0d0" }, grid: { color: "#22304f" } },
+          y: {
+            ticks: { color: "#9fb0d0", precision: 0 },
+            grid: { color: "#22304f" },
+            beginAtZero: true,
+          },
+        },
+      },
+    });
+  }
+
+  const types = countsByType();
+  const ct = document.getElementById("chartType");
+  if (ct) {
+    statsCharts.type = new Chart(ct, {
+      type: "doughnut",
+      data: {
+        labels: ["Forza", "Corsa"],
+        datasets: [
+          {
+            data: [types.strength, types.run],
+            backgroundColor: ["#62d4ff", "#ffb454"],
+            borderColor: "#121a2d",
+          },
+        ],
+      },
+      options: {
+        plugins: { legend: { labels: { color: "#eef3ff" } } },
+      },
+    });
+  }
+
+  const rpe = weeklyAvgRpe(10);
+  const cr = document.getElementById("chartRpe");
+  if (cr) {
+    statsCharts.rpe = new Chart(cr, {
+      type: "bar",
+      data: {
+        labels: rpe.labels,
+        datasets: [
+          {
+            label: "RPE medio",
+            data: rpe.values,
+            backgroundColor: "#ff8fa3",
+          },
+        ],
+      },
+      options: {
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: "#9fb0d0" }, grid: { color: "#22304f" } },
+          y: {
+            min: 0,
+            max: 10,
+            ticks: { color: "#9fb0d0" },
+            grid: { color: "#22304f" },
+          },
+        },
+      },
+    });
+  }
+}
+
+function corsaPage() {
+  const wk = runStatsThisWeek();
+  const runStreak = computeStreaks("run");
+  const todayK = todayKey();
+
+  return (
+    pageHead(
+      "Programma di Corsa",
+      "Modello polarizzato 80/20 · integrato con la forza a corpo libero",
+    ) +
+    todayContextCard() +
+    `
+  <div class="strava-hero">
+    <div class="d-flex justify-content-between align-items-start">
+      <div>
+        <div class="small fw-semibold" style="opacity:.85"><i class="bi bi-strava me-1"></i>QUESTA SETTIMANA</div>
+        <h4 class="fw-bold mb-0 mt-1">Il tuo riepilogo corsa</h4>
+      </div>
+      <div class="hero-icon-btn"><i class="bi bi-map-fill"></i></div>
+    </div>
+    <div class="strava-stat-grid">
+      <div>
+        <div class="strava-stat-num">${wk.count}</div>
+        <div class="strava-stat-label">Sessioni</div>
+      </div>
+      <div>
+        <div class="strava-stat-num">${wk.minutes}'</div>
+        <div class="strava-stat-label">Minuti stimati</div>
+      </div>
+      <div>
+        <div class="strava-stat-num"><i class="bi bi-fire"></i> ${runStreak.current}</div>
+        <div class="strava-stat-label">Streak corsa</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="alert alert-info border-0 bg-info bg-opacity-10 text-info mb-4">
+    <i class="bi bi-info-circle-fill me-2"></i>Filosofia <strong>80/20</strong>: l'80% del volume settimanale è a bassa intensità (Z1–Z2), solo il 20% è dedicato a stimoli realmente duri (Z3–Z4).
+  </div>
+
+  <h5 class="mb-3"><i class="bi bi-heart-pulse me-1"></i> Zone di Intensità</h5>
+  <div class="row g-3 mb-4">
+    ${RUN_ZONES.map(
+      (z) => `
+      <div class="col-12 col-sm-6 col-md-3">
+        <div class="card card-custom p-3 h-100 border ${z.badge}">
+          <span class="fw-bold">${z.z} · ${z.name}</span>
+          <div class="metric-val fs-5 mt-2 text-light">${z.range}</div>
+          <p class="text-secondary small mb-0 mt-2">${z.desc}</p>
+        </div>
+      </div>
+    `,
+    ).join("")}
+  </div>
+
+  <h5 class="mb-3"><i class="bi bi-activity me-1"></i> Le tue attività · 5 Sessioni Settimanali</h5>
+  <div class="row g-3 mb-4">
+    ${RUN_SESSIONS.map((s, i) => {
+      const doneToday = state.log.some(
+        (l) => l.type === "run" && l.label === s.title && l.date === todayK,
+      );
+      const monthCount = runCategoryCountThisMonth(s.title);
+      return `
+      <div class="col-12 col-md-6">
+        <div class="strava-activity-card h-100 d-flex flex-column">
+          <div class="d-flex align-items-center gap-3 mb-3">
+            <div class="strava-icon-badge"><i class="bi ${s.icon}"></i></div>
+            <div class="flex-grow-1">
+              <div class="fw-bold text-white">${s.title}</div>
+              <div class="small text-secondary">${s.day}</div>
+            </div>
+            <span class="badge bg-dark border text-light">${s.zone}</span>
+          </div>
+          <p class="text-secondary small mb-3">${s.desc}</p>
+          <div class="row g-2 mb-3">
+            <div class="col-4">
+              <div class="strava-metric">
+                <div class="strava-metric-val">${s.duration}</div>
+                <div class="strava-metric-label">Durata</div>
+              </div>
+            </div>
+            <div class="col-4">
+              <div class="strava-metric">
+                <div class="strava-metric-val">${s.zone}</div>
+                <div class="strava-metric-label">Zona target</div>
+              </div>
+            </div>
+            <div class="col-4">
+              <div class="strava-metric">
+                <div class="strava-metric-val">${monthCount}×</div>
+                <div class="strava-metric-label">Questo mese</div>
+              </div>
+            </div>
+          </div>
+          <button class="strava-btn ${doneToday ? "done" : ""} mt-auto align-self-start" onclick="logRun('${s.title.replace(/'/g, "\\'")}', '${s.day.replace(/'/g, "\\'")}')">
+            <i class="bi ${doneToday ? "bi-check2-circle" : "bi-play-fill"} me-1"></i> ${doneToday ? "Registrata oggi" : "Registra attività"}
+          </button>
+        </div>
+      </div>
+    `;
+    }).join("")}
+  </div>
+
+  <div class="card card-custom p-4 mb-4">
+    <h5 class="mb-3"><i class="bi bi-arrow-left-right me-1"></i> Integrazione Forza-Corsa</h5>
+    <div class="row g-3">
+      <div class="col-12 col-md-6">
+        <div class="p-3 border rounded-3 bg-dark bg-opacity-25 h-100">
+          <strong class="text-info">Sequenza</strong>
+          <p class="text-secondary small mb-0 mt-1">Nei giorni con doppia sessione, la forza va eseguita prima della corsa: preserva la qualità tecnica di squat e push-up, lasciando che la corsa in Z1 successiva "assorba" la fatica residua.</p>
+        </div>
+      </div>
+      <div class="col-12 col-md-6">
+        <div class="p-3 border rounded-3 bg-dark bg-opacity-25 h-100">
+          <strong class="text-warning">Recupero Neuromuscolare</strong>
+          <p class="text-secondary small mb-0 mt-1">Il mercoledì è dedicato esclusivamente alla corsa intensa, per permettere al sistema neuromuscolare di recuperare dagli stimoli di forza.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h5 class="mb-3"><i class="bi bi-person-walking me-1"></i> Meccanica e Tecnica di Corsa</h5>
+  <div class="row g-3 mb-4">
+    ${RUN_MECHANICS.map(
+      (m) => `
+      <div class="col-12 col-md-4">
+        <div class="card card-custom p-3 h-100">
+          <strong class="text-light"><i class="bi ${m.icon} me-1 text-info"></i> ${m.title}</strong>
+          <p class="text-secondary small mb-0 mt-2">${m.desc}</p>
+        </div>
+      </div>
+    `,
+    ).join("")}
+  </div>
+
+  <h5 class="mb-3"><i class="bi bi-graph-up me-1"></i> Progressione e Scarico</h5>
+  <div class="row g-3">
+    ${RUN_PROGRESSION.map(
+      (r) => `
+      <div class="col-12 col-md-4">
+        <div class="card card-custom p-3 h-100">
+          <strong class="${r.color}"><i class="bi ${r.icon} me-1"></i> ${r.title}</strong>
+          <p class="text-secondary small mb-0 mt-2">${r.desc}</p>
+        </div>
+      </div>
+    `,
+    ).join("")}
+  </div>`
+  );
+}
+
+function recuperoPage() {
+  const tIdx = todayIndex();
+  const todayDay = SCHEDULE[tIdx];
+  const isHighDemand =
+    todayDay.cardio === "Zona 4" || todayDay.cardio === "Zona 2";
+  return (
+    pageHead(
+      "Recupero Fisico",
+      "Nutrizione, monitoraggio e principi di recupero sistemico",
+    ) +
+    todayContextCard() +
+    `
+  <div class="alert ${isHighDemand ? "alert-warning border-0 bg-warning bg-opacity-10 text-warning" : "alert-secondary border-0 bg-dark text-secondary"} mb-4">
+    <i class="bi bi-lightbulb-fill me-2"></i>
+    ${
+      isHighDemand
+        ? `Oggi (<strong>${esc(todayDay.title)}</strong>) è una sessione ad alta richiesta energetica: dai priorità a carboidrati e idratazione con sodio prima/durante l'allenamento (vedi sotto).`
+        : `Oggi (<strong>${esc(todayDay.title)}</strong>) è una giornata a domanda energetica moderata: nutrizione standard, focus su sonno e mobilità.`
+    }
+  </div>
+
+  <h5 class="mb-3"><i class="bi bi-egg-fried me-1"></i> Supporto Nutrizionale</h5>
+  <div class="row g-3 mb-4">
+    ${RECOVERY_NUTRITION.map(
+      (n) => `
+      <div class="col-12 col-md-4">
+        <div class="card card-custom p-3 h-100">
+          <span class="text-secondary small text-uppercase"><i class="bi ${n.icon} me-1"></i> ${n.title}</span>
+          <div class="metric-val fs-4 text-info my-1">${n.value}</div>
+          <p class="text-secondary small mb-0">${n.desc}</p>
+        </div>
+      </div>
+    `,
+    ).join("")}
+  </div>
+
+  <h5 class="mb-3"><i class="bi bi-activity me-1"></i> Monitoraggio del Recupero</h5>
+  <div class="row g-3 mb-4">
+    ${RECOVERY_MONITORING.map(
+      (m) => `
+      <div class="col-12 col-md-4">
+        <div class="card card-custom p-3 h-100">
+          <strong class="text-light"><i class="bi ${m.icon} me-1 text-danger"></i> ${m.title}</strong>
+          <p class="text-secondary small mb-0 mt-2">${m.desc}</p>
+        </div>
+      </div>
+    `,
+    ).join("")}
+  </div>
+
+  <h5 class="mb-3"><i class="bi bi-battery-charging me-1"></i> Principi Generali di Recupero</h5>
+  <div class="row g-3 mb-4">
+    ${RECOVERY_PRINCIPLES.map(
+      (p) => `
+      <div class="col-12 col-sm-6 col-md-3">
+        <div class="card card-custom p-3 h-100">
+          <strong class="text-light"><i class="bi ${p.icon} me-1 text-success"></i> ${p.title}</strong>
+          <p class="text-secondary small mb-0 mt-2">${p.desc}</p>
+        </div>
+      </div>
+    `,
+    ).join("")}
+  </div>
+
+  <div class="alert alert-secondary border-0 bg-dark text-secondary mb-0">
+    <i class="bi bi-lightbulb me-1"></i> Regola pratica: se FCR e HRV segnalano stress accumulato, privilegia le sessioni in Zona 1–2 e valuta di anticipare mentalmente la prossima Cutback Week, anche se non ancora prevista dal calendario del mesociclo.
+  </div>`
+  );
+}
+
+// ===== PROGRESSI: PESO, BODY FAT, FOTO SETTIMANALI =====
+function metricSorted() {
+  return [...state.metrics].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function lastMetric() {
+  const arr = metricSorted();
+  return arr.length ? arr[arr.length - 1] : null;
+}
+
+function daysSinceLastPhoto() {
+  if (!state.photos.length) return Infinity;
+  const last = [...state.photos].sort((a, b) =>
+    b.date.localeCompare(a.date),
+  )[0];
+  return Math.floor((new Date(todayKey()) - new Date(last.date)) / 86400000);
+}
+
+function progressiPage() {
+  const last = lastMetric();
+  const prev = metricSorted().slice(-2)[0];
+  const weightDelta =
+    last && prev && prev !== last
+      ? +(last.weight - prev.weight).toFixed(1)
+      : null;
+  const photoDue = daysSinceLastPhoto() >= 7;
+
+  return (
+    pageHead(
+      "Peso & Foto Progressi",
+      "Traccia peso, body fat e la tua evoluzione fisica settimana per settimana",
+    ) +
+    `
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-sm-6 col-md-3">
+      <div class="card card-custom p-3 h-100">
+        <span class="text-secondary small text-uppercase">Peso Attuale</span>
+        <div class="metric-val text-white my-1">${last ? last.weight + " kg" : "—"}</div>
+        ${
+          weightDelta !== null
+            ? `<span class="small ${weightDelta <= 0 ? "text-success" : "text-warning"}"><i class="bi bi-arrow-${weightDelta <= 0 ? "down" : "up"}-short"></i>${Math.abs(weightDelta)} kg vs precedente</span>`
+            : `<span class="small text-secondary">Nessun dato precedente</span>`
+        }
+      </div>
+    </div>
+    <div class="col-12 col-sm-6 col-md-3">
+      <div class="card card-custom p-3 h-100">
+        <span class="text-secondary small text-uppercase">Body Fat</span>
+        <div class="metric-val text-info my-1">${last && last.bodyFat != null ? last.bodyFat + "%" : "—"}</div>
+        <span class="small text-secondary">ultima misurazione</span>
+      </div>
+    </div>
+    <div class="col-12 col-sm-6 col-md-3">
+      <div class="card card-custom p-3 h-100">
+        <span class="text-secondary small text-uppercase">Misurazioni</span>
+        <div class="metric-val text-white my-1">${state.metrics.length}</div>
+        <span class="small text-secondary">registrate finora</span>
+      </div>
+    </div>
+    <div class="col-12 col-sm-6 col-md-3">
+      <div class="card card-custom p-3 h-100 ${photoDue ? "border border-warning" : ""}">
+        <span class="text-secondary small text-uppercase">Foto Progressi</span>
+        <div class="metric-val ${photoDue ? "text-warning" : "text-success"} my-1">${state.photos.length}</div>
+        <span class="small ${photoDue ? "text-warning" : "text-secondary"}">${photoDue ? "Ne manca una questa settimana!" : "In pari con la settimana"}</span>
+      </div>
+    </div>
+  </div>
+
+  ${
+    photoDue
+      ? `
+  <div class="alert alert-warning border-0 bg-warning bg-opacity-10 text-warning mb-4">
+    <i class="bi bi-camera-fill me-2"></i>Sono passati 7+ giorni dall'ultima foto progressi: scattane una nuova per mantenere una timeline utile a valutare i cambiamenti.
+  </div>`
+      : ""
+  }
+
+  <div class="card card-custom p-4 mb-4">
+    <h5 class="mb-3"><i class="bi bi-clipboard2-pulse me-1"></i> Nuova Misurazione</h5>
+    <div class="row g-3 align-items-end">
+      <div class="col-6 col-md-3">
+        <label class="form-label text-secondary small">Data</label>
+        <input type="date" id="metricDate" class="form-control bg-dark text-light border-secondary" value="${todayKey()}">
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label text-secondary small">Peso (kg)</label>
+        <input type="number" step="0.1" min="0" id="metricWeight" class="form-control bg-dark text-light border-secondary" placeholder="es. 78.4" value="${last ? last.weight : ""}">
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label text-secondary small">Body Fat % (opz.)</label>
+        <input type="number" step="0.1" min="0" max="60" id="metricBf" class="form-control bg-dark text-light border-secondary" placeholder="es. 16.5" value="${last && last.bodyFat != null ? last.bodyFat : ""}">
+      </div>
+      <div class="col-6 col-md-3">
+        <button class="btn btn-primary w-100" onclick="addMetric()"><i class="bi bi-plus-lg me-1"></i> Salva</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card card-custom p-3 mb-4">
+    <h6 class="mb-3"><i class="bi bi-graph-up me-1"></i> Andamento Peso & Body Fat</h6>
+    <canvas id="chartWeightBf" height="220"></canvas>
+  </div>
+
+  <div class="card card-custom p-3 mb-4">
+    <h6 class="mb-3">Storico Misurazioni</h6>
+    ${
+      metricSorted().length
+        ? `
+    <div class="table-responsive">
+      <table class="table table-dark table-sm align-middle mb-0">
+        <thead><tr><th>Data</th><th>Peso</th><th>Body Fat</th><th></th></tr></thead>
+        <tbody>
+          ${metricSorted()
+            .slice()
+            .reverse()
+            .map(
+              (m) => `
+          <tr>
+            <td>${new Date(m.date).toLocaleDateString("it-IT")}</td>
+            <td>${m.weight} kg</td>
+            <td>${m.bodyFat != null ? m.bodyFat + "%" : "—"}</td>
+            <td class="text-end"><button class="btn btn-sm btn-outline-danger" onclick="deleteMetric('${m.id}')"><i class="bi bi-trash"></i></button></td>
+          </tr>`,
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>`
+        : `<p class="text-secondary small mb-0">Nessuna misurazione registrata: inizia oggi per costruire lo storico.</p>`
+    }
+  </div>
+
+  <div class="card card-custom p-4">
+    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+      <h5 class="mb-0"><i class="bi bi-images me-1"></i> Foto Progressi Settimanali</h5>
+      <button class="btn btn-outline-light btn-sm" onclick="document.getElementById('photoInput').click()">
+        <i class="bi bi-camera-fill me-1"></i> Scatta / Carica Foto
+      </button>
+      <input type="file" id="photoInput" accept="image/*" capture="environment" class="d-none" onchange="handlePhotoUpload(event)">
+    </div>
+    ${
+      state.photos.length
+        ? `
+    <div class="row g-3">
+      ${[...state.photos]
+        .sort((a, b) => b.date.localeCompare(a.date))
+        .map(
+          (p) => `
+      <div class="col-6 col-md-3">
+        <div class="card card-custom p-2 h-100">
+          <img src="${p.thumb}" class="w-100 rounded-3 mb-2" style="aspect-ratio:3/4;object-fit:cover" alt="Foto progressi ${p.date}">
+          <div class="small text-secondary text-center">${new Date(p.date).toLocaleDateString("it-IT")}</div>
+          ${p.w ? `<div class="small text-center text-info">${p.w} kg</div>` : ""}
+          <button class="btn btn-sm btn-outline-danger mt-2" onclick="deletePhoto('${p.id}')"><i class="bi bi-trash"></i></button>
+        </div>
+      </div>`,
+        )
+        .join("")}
+    </div>`
+        : `<p class="text-secondary small mb-0">Nessuna foto ancora. Scattane una a settimana, sempre nella stessa posa/luce, per confronti affidabili nel tempo.</p>`
+    }
+  </div>`
+  );
+}
+
+function addMetric() {
+  const date = document.getElementById("metricDate").value || todayKey();
+  const weight = parseFloat(document.getElementById("metricWeight").value);
+  const bfRaw = document.getElementById("metricBf").value;
+  const bodyFat = bfRaw !== "" ? parseFloat(bfRaw) : null;
+  if (!weight || weight <= 0) {
+    toast("Inserisci un peso valido");
+    return;
+  }
+  const existingIdx = state.metrics.findIndex((m) => m.date === date);
+  const entry = {
+    id: existingIdx >= 0 ? state.metrics[existingIdx].id : "m" + Date.now(),
+    date,
+    weight,
+    bodyFat,
+  };
+  if (existingIdx >= 0) state.metrics[existingIdx] = entry;
+  else state.metrics.push(entry);
+  save();
+  toast("Misurazione salvata");
+  render();
+}
+
+function deleteMetric(id) {
+  state.metrics = state.metrics.filter((m) => m.id !== id);
+  save();
+  render();
+}
+
+function compressImage(file, maxWidth, quality) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = () => {
+        const scale = Math.min(1, maxWidth / img.width);
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function handlePhotoUpload(ev) {
+  const file = ev.target.files[0];
+  ev.target.value = "";
+  if (!file) return;
+  try {
+    const thumb = await compressImage(file, 800, 0.72);
+    const entry = {
+      id: "p" + Date.now(),
+      date: todayKey(),
+      w: lastMetric() ? lastMetric().weight : null,
+      thumb, // in locale conserviamo sempre una miniatura compressa
+      nativePath: null,
+    };
+    // Su dispositivo nativo salviamo anche il file originale nello
+    // storage persistente dell'app (più capiente del solo localStorage)
+    if (NativeStorage.isNative()) {
+      try {
+        const { Filesystem, Directory } = window.Capacitor.Plugins;
+        const path = "progress-photos/" + entry.id + ".jpg";
+        const base64 = thumb.split(",")[1];
+        await Filesystem.writeFile({
+          path,
+          data: base64,
+          directory: Directory.Data,
+          recursive: true,
+        });
+        entry.nativePath = path;
+      } catch (e) {
+        console.error("Salvataggio nativo foto fallito", e);
+      }
+    }
+    state.photos.push(entry);
+    save();
+    toast("Foto progressi salvata");
+    render();
+  } catch (e) {
+    console.error(e);
+    toast("Errore durante il caricamento della foto");
+  }
+}
+
+function deletePhoto(id) {
+  state.photos = state.photos.filter((p) => p.id !== id);
+  save();
+  render();
+}
+
+let progressChart = null;
+function renderProgressChart() {
+  if (typeof Chart === "undefined") return;
+  if (progressChart) {
+    progressChart.destroy();
+    progressChart = null;
+  }
+  const canvas = document.getElementById("chartWeightBf");
+  if (!canvas) return;
+  const data = metricSorted();
+  progressChart = new Chart(canvas, {
+    type: "line",
+    data: {
+      labels: data.map((m) =>
+        new Date(m.date).toLocaleDateString("it-IT", {
+          day: "2-digit",
+          month: "2-digit",
+        }),
+      ),
+      datasets: [
+        {
+          label: "Peso (kg)",
+          data: data.map((m) => m.weight),
+          borderColor: "#ff5a36",
+          backgroundColor: "rgba(255,90,54,.12)",
+          yAxisID: "y",
+          tension: 0.3,
+          fill: true,
+          pointRadius: 3,
+        },
+        {
+          label: "Body Fat (%)",
+          data: data.map((m) => m.bodyFat),
+          borderColor: "#62d4ff",
+          backgroundColor: "rgba(98,212,255,.1)",
+          yAxisID: "y1",
+          tension: 0.3,
+          spanGaps: true,
+          pointRadius: 3,
+        },
+      ],
+    },
+    options: {
+      plugins: { legend: { labels: { color: "#eef3ff" } } },
+      scales: {
+        x: { ticks: { color: "#9fb0d0" }, grid: { color: "#22304f" } },
+        y: {
+          type: "linear",
+          position: "left",
+          ticks: { color: "#ff8f6b" },
+          grid: { color: "#22304f" },
+        },
+        y1: {
+          type: "linear",
+          position: "right",
+          ticks: { color: "#62d4ff" },
+          grid: { drawOnChartArea: false },
+        },
+      },
+    },
+  });
+}
+
+function zoneAlert() {
+  alert(
+    "ALLERTA: FC in Z3 durante una corsa facile. Rallenta e torna in Z1–Z2.",
+  );
+  try {
+    navigator.vibrate?.([180, 80, 180]);
+  } catch (e) {}
+  beep();
+}
+
+function beep() {
+  try {
+    const a = new AudioContext(),
+      o = a.createOscillator(),
+      g = a.createGain();
+    o.connect(g);
+    g.connect(a.destination);
+    o.frequency.value = 880;
+    g.gain.value = 0.06;
+    o.start();
+    o.stop(a.currentTime + 0.12);
+  } catch (e) {}
+}
+
+let timerInt;
+function startTimer(seconds, label) {
+  clearInterval(timerInt);
+  state.timer = { mode: label, seconds, running: true };
+
+  const content = `
+    <div class="modal-header border-secondary">
+      <h5 class="modal-title"><i class="bi bi-stopwatch text-info me-2"></i> Recupero · ${esc(label)}</h5>
+      <button type="button" class="btn-close btn-close-white" onclick="closeModal()"></button>
+    </div>
+    <div class="modal-body text-center py-4">
+      <div class="timer-display text-info my-2" id="timerN">${fmt(seconds)}</div>
+      <p class="text-secondary small mb-0">Correttivo: Mantieni la tecnica pulita prima di iniziare il prossimo set.</p>
+    </div>
+    <div class="modal-footer border-secondary justify-content-center">
+      <button class="btn btn-secondary px-4" onclick="stopTimer()">Interrompi Timer</button>
+    </div>`;
+
+  openModal(content);
+
+  timerInt = setInterval(() => {
+    if (!state.timer.running) return;
+    state.timer.seconds--;
+    const el = document.getElementById("timerN");
+    if (el) el.textContent = fmt(state.timer.seconds);
+    if (state.timer.seconds <= 0) {
+      clearInterval(timerInt);
+      beep();
+      closeModal();
+    }
+  }, 1000);
+}
+
+function stopTimer() {
+  state.timer.running = false;
+  clearInterval(timerInt);
+  closeModal();
+}
+
+function fmt(s) {
+  return (
+    String(Math.floor(Math.max(0, s) / 60)).padStart(2, "0") +
+    ":" +
+    String(Math.max(0, s) % 60).padStart(2, "0")
+  );
+}
+
+function library() {
+  return (
+    pageHead(
+      "Libreria Esercizi",
+      "Gerarchia per pattern, livello e tempo sotto tensione (TUT)",
+    ) +
+    `
+  ${Object.entries(LIB)
+    .map(
+      ([pat, list]) => `
+    <h5 class="text-uppercase text-info tracking-wide mt-4 mb-3"><i class="bi bi-collection me-1"></i> Pattern: ${pat}</h5>
+    <div class="row g-3">
+      ${list
+        .map(
+          (e) => `
+        <div class="col-12 col-sm-6 col-md-3">
+          <div class="card card-custom p-3 h-100">
+            <span class="badge bg-secondary w-auto align-self-start mb-2">${e[1]}</span>
+            <h6 class="fw-bold text-light mb-1">${e[0]}</h6>
+            <div class="small text-info mb-1">${e[3]}</div>
+            <div class="small text-secondary mb-2">${e[4]}</div>
+            <div class="small text-warning mt-auto"><i class="bi bi-shield-check"></i> Focus: ${pat === "push" ? "anche stabili" : pat === "squat" ? "ginocchia in asse" : pat === "pull" ? "no slancio" : "bacino in neutro"}</div>
+          </div>
+        </div>
+      `,
+        )
+        .join("")}
+    </div>
+  `,
+    )
+    .join("")}`
+  );
+}
+
+function corePage() {
+  return (
+    pageHead(
+      "Modulo Core",
+      "6 funzioni di anti-movimento isometrico e dinamico",
+    ) +
+    `
+  <div class="row g-3">
+    ${CORE.map(
+      (c) => `
+      <div class="col-12 col-sm-6 col-md-4">
+        <div class="card card-custom p-3 h-100">
+          <span class="text-secondary small text-uppercase">${c[0]}</span>
+          <h5 class="fw-bold text-light my-2">${c[1]}</h5>
+          <span class="badge bg-dark border text-info w-auto align-self-start">${c[2]}</span>
+        </div>
+      </div>
+    `,
+    ).join("")}
+  </div>`
+  );
+}
+
+function prevenzione() {
+  return (
+    pageHead(
+      "Prevenzione Infortuni",
+      "Moduli pronti per warm-up o blocchi dedicati",
+    ) +
+    `
+  <div class="row g-3 mb-4">
+    ${PREV.map(
+      (c) => `
+      <div class="col-12 col-sm-6 col-md-4">
+        <div class="card card-custom p-3 h-100">
+          <span class="badge bg-warning text-dark w-auto align-self-start mb-2">${c[0]}</span>
+          <h6 class="fw-bold text-light mb-1">${c[1]}</h6>
+          <span class="text-secondary small">${c[2]}</span>
+        </div>
+      </div>
+    `,
+    ).join("")}
+  </div>
+
+  <h5 class="mb-3">Timing dello Stretching</h5>
+  <div class="row g-3">
+    <div class="col-12 col-md-6">
+      <div class="card card-custom p-3">
+        <strong class="text-info"><i class="bi bi-play-circle me-1"></i> Warm-up</strong>
+        <p class="text-secondary small mb-0 mt-1">Stretching dinamico e mobilità attiva focalizzati sulla pre-attivazione neuromuscolare.</p>
+      </div>
+    </div>
+    <div class="col-12 col-md-6">
+      <div class="card card-custom p-3">
+        <strong class="text-success"><i class="bi bi-stop-circle me-1"></i> Cool-down</strong>
+        <p class="text-secondary small mb-0 mt-1">Stretching statico posposto interamente alla fase finale di recupero post-sessione.</p>
+      </div>
+    </div>
+  </div>`
+  );
+}
+
+function retest() {
+  const a = state.assessment,
+    p = state.profile;
+  return (
+    pageHead("Re-test Mensile", "Rivalutazione obbligatoria ogni 4 settimane") +
+    `
+  <div class="card card-custom p-4 mb-4">
+    <h4 class="h5 mb-2">Nuova Baseline Tecnico-Forza</h4>
+    <p class="text-secondary small">Inserisci i risultati dei 5 test aggiornati. Il nuovo punteggio aggiornerà il tuo Profile ID.</p>
+    
+    <div class="row g-3 mb-4">
+      ${["push", "pull", "squat", "plank", "run"]
+        .map(
+          (k) => `
+        <div class="col-12 col-md-4">
+          <label class="form-label text-secondary small">${k === "push" ? "Push-up" : k === "pull" ? "Pull-up / Hang" : k === "squat" ? "Squat 1 min" : k === "plank" ? "Plank (s)" : "Corsa 5 km (min)"}</label>
+          <input id="r_${k}" type="number" class="form-control bg-dark text-light border-secondary" value="${a?.[k] ?? ""}">
+        </div>
+      `,
+        )
+        .join("")}
+    </div>
+    <div>
+      <button class="btn btn-primary" onclick="runRetest()"><i class="bi bi-arrow-repeat me-1"></i> Salva e Calcola Re-test</button>
+    </div>
+  </div>
+
+  ${
+    p
+      ? `
+    <div class="card card-custom p-3">
+      <h6 class="text-secondary mb-2">Stato Profilo Corrente</h6>
+      <div class="d-flex gap-4">
+        <div>Livello: <strong class="text-info">${p.level}</strong></div>
+        <div>Punteggio: <strong class="text-light">${p.score} / 20</strong></div>
+      </div>
+    </div>`
+      : ""
+  }`
+  );
+}
+
+function runRetest() {
+  const vals = {
+    push: +document.getElementById("r_push").value || 0,
+    pull: +document.getElementById("r_pull").value || 0,
+    squat: +document.getElementById("r_squat").value || 0,
+    plank: +document.getElementById("r_plank").value || 0,
+    run: +document.getElementById("r_run").value || 0,
+  };
+  const score = Object.entries(vals).reduce(
+    (s, [k, v]) => s + scoreRanges(v, k),
+    0,
+  );
+  const old = state.profile;
+  state.profile = {
+    ...(old || {}),
+    id:
+      "HTS-" +
+      [score, vals.push, vals.pull, vals.squat, vals.plank, vals.run].join("-"),
+    level: levelFromScore(score),
+    score,
+    updatedAt: new Date().toISOString(),
+  };
+  state.assessment = vals;
+  save();
+  route("dashboard");
+}
+
+function settings() {
+  const acc = state.account;
+  return (
+    pageHead(
+      "Impostazioni",
+      "Persistenza dati locale e configurazione interfacce",
+    ) +
+    `
+  <div class="card card-custom p-4 mb-4">
+    <h5 class="mb-3"><i class="bi bi-cloud-check me-1"></i> Account & Sincronizzazione Cloud</h5>
+    ${
+      acc.uid
+        ? `
+    <div class="d-flex align-items-center gap-3 flex-wrap">
+      <div class="avatar-circle">${esc((acc.username || acc.email || "U").slice(0, 2).toUpperCase())}</div>
+      <div class="flex-grow-1">
+        <div class="fw-bold text-white">${esc(acc.username || "Username non impostato")}</div>
+        <div class="small text-secondary">${esc(acc.email || "")}</div>
+        <div class="small text-secondary" id="cloudSyncStatus">
+          ${acc.lastSyncAt ? "Ultima sincronizzazione: " + new Date(acc.lastSyncAt).toLocaleString("it-IT") : "In attesa di sincronizzazione…"}
+        </div>
+      </div>
+      <div class="d-flex gap-2">
+        <button class="btn btn-sm btn-outline-light" onclick="openUsernameModal()"><i class="bi bi-pencil me-1"></i> Cambia username</button>
+        <button class="btn btn-sm btn-outline-danger" onclick="CloudSync.signOut()"><i class="bi bi-box-arrow-right me-1"></i> Esci</button>
+      </div>
+    </div>`
+        : `
+    <p class="text-secondary small mb-3">Accedi con Google per sincronizzare i tuoi dati (allenamenti, peso, foto) tra più dispositivi collegati allo stesso account.</p>
+    <button class="btn btn-light fw-bold" onclick="CloudSync.signIn()">
+      <i class="bi bi-google me-2"></i> Accedi con Google
+    </button>
+    <div class="small text-secondary mt-2" id="cloudSyncStatus"></div>`
+    }
+  </div>
+
+  <div class="card card-custom p-4 mb-4">
+    <div class="row g-3 mb-4">
+      <div class="col-12 col-md-6">
+        <label class="form-label text-secondary small">Alert Sconfinamento Zona 3</label>
+        <select id="setAlert" class="form-select bg-dark text-light border-secondary" onchange="state.settings.dynamicAlert=this.value==='1';save()">
+          <option value="1" ${state.settings.dynamicAlert ? "selected" : ""}>Attivo</option>
+          <option value="0" ${!state.settings.dynamicAlert ? "selected" : ""}>Disattivo</option>
+        </select>
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label text-secondary small">Segnali Acustici Timer</label>
+        <select id="setSound" class="form-select bg-dark text-light border-secondary" onchange="state.settings.sound=this.value==='1';save()">
+          <option value="1" ${state.settings.sound ? "selected" : ""}>Attivi</option>
+          <option value="0" ${!state.settings.sound ? "selected" : ""}>Disattivi</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="d-flex flex-wrap gap-2">
+      <button class="btn btn-outline-light" onclick="exportData()"><i class="bi bi-download me-1"></i> Esporta JSON</button>
+      <button class="btn btn-outline-light" onclick="document.getElementById('importFile').click()"><i class="bi bi-upload me-1"></i> Importa JSON</button>
+      <input id="importFile" type="file" accept=".json" class="d-none" onchange="importData(event)">
+      <button class="btn btn-outline-danger ms-auto" onclick="resetData()"><i class="bi bi-trash me-1"></i> Reset Dati</button>
+    </div>
+  </div>
+
+  <div class="alert alert-dark border border-secondary text-secondary small">
+    <i class="bi bi-device-ssd me-1"></i> I dati vengono memorizzati nel <code>localStorage</code> del browser (e, se disponibile, nello storage nativo del dispositivo). Se hai eseguito l'accesso, vengono anche sincronizzati su Firebase Realtime Database.
+  </div>`
+  );
+}
+
+function exportData() {
+  const b = new Blob(
+    [
+      JSON.stringify(
+        { ...state, exportedAt: new Date().toISOString() },
+        null,
+        2,
+      ),
+    ],
+    { type: "application/json" },
+  );
+  const u = URL.createObjectURL(b);
+  const a = document.createElement("a");
+  a.href = u;
+  a.download = "hybrid-training-backup.json";
+  a.click();
+  URL.revokeObjectURL(u);
+}
+
+function importData(ev) {
+  const f = ev.target.files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const imported = JSON.parse(r.result);
+      Object.keys(DEFAULT_STATE).forEach((k) => delete state[k]);
+      Object.assign(state, clone(DEFAULT_STATE), imported, {
+        _storageVersion: STORAGE_VERSION,
+      });
+      save();
+      render();
+      alert("Backup importato correttamente.");
+    } catch (e) {
+      alert("File JSON non valido.");
+    }
+  };
+  r.readAsText(f);
+}
+
+function resetData() {
+  if (confirm("Sei sicuro di voler cancellare tutti i dati registrati?")) {
+    localStorage.removeItem(STORAGE_KEY);
+    location.reload();
+  }
+}
+
+function openModal(html) {
+  document.getElementById("modalContent").innerHTML = html;
+  if (!bsModal) {
+    bsModal = new bootstrap.Modal(document.getElementById("appModal"));
+  }
+  bsModal.show();
+}
+
+function closeModal() {
+  if (bsModal) {
+    bsModal.hide();
+  }
+}
+
+function openUsernameModal(isFirstTime) {
+  openModal(`
+  <div class="modal-header border-secondary">
+    <h5 class="modal-title"><i class="bi bi-person-badge-fill text-info me-2"></i>${isFirstTime ? "Scegli il tuo username" : "Cambia username"}</h5>
+    ${isFirstTime ? "" : '<button type="button" class="btn-close btn-close-white" onclick="closeModal()"></button>'}
+  </div>
+  <div class="modal-body">
+    <p class="text-secondary small">Identifica il tuo profilo sincronizzato: deve essere unico tra tutti gli utenti dell'app.</p>
+    <input type="text" id="usernameInput" class="form-control bg-dark text-light border-secondary mb-2" placeholder="es. stefano_runner" value="${esc(state.account.username || "")}">
+    <div class="small text-danger" id="usernameError"></div>
+  </div>
+  <div class="modal-footer border-secondary">
+    <button class="btn btn-primary w-100" onclick="submitUsername()"><i class="bi bi-check-lg me-1"></i> Conferma</button>
+  </div>`);
+}
+
+async function submitUsername() {
+  const val = document.getElementById("usernameInput").value.trim();
+  const errEl = document.getElementById("usernameError");
+  if (!val) {
+    errEl.textContent = "Inserisci uno username.";
+    return;
+  }
+  if (!state.account.uid || !window.__fb) {
+    errEl.textContent = "Devi essere connesso per impostare uno username.";
+    return;
+  }
+  try {
+    const confirmed = await window.__fb.claimUsername(state.account.uid, val);
+    state.account.username = confirmed;
+    save();
+    closeModal();
+    render();
+    toast("Username salvato: " + confirmed);
+  } catch (e) {
+    errEl.textContent =
+      e && e.message === "username-taken"
+        ? "Username già in uso, scegline un altro."
+        : "Errore, riprova.";
+  }
+}
+
+function openDay(index) {
+  const x = SCHEDULE[index];
+  if (x.patterns.length === 0) {
+    route("cardio");
+    return;
+  }
+  route("workout");
+  setTimeout(() => {
+    document.getElementById("wday").value = index;
+    selectPattern(index, x.patterns[0]);
+  }, 50);
+}
+
+// ===== REGISTRAZIONE RAPIDA (FAB globale) =====
+// Accessibile da qualunque pagina: permette di loggare la corsa in un
+// tocco o saltare direttamente al tracker forza del giorno, senza dover
+// prima navigare sulla tab corretta.
+function quickLogSheet() {
+  const tIdx = todayIndex();
+  const day = SCHEDULE[tIdx];
+  const todayK = todayKey();
+  const strengthDone = day.patterns.length ? dayCompletion(tIdx) : null;
+
+  return `
+  <div class="modal-header border-secondary">
+    <h5 class="modal-title"><i class="bi bi-lightning-charge-fill text-warning me-2"></i>Registrazione Rapida</h5>
+    <button type="button" class="btn-close btn-close-white" onclick="closeModal()"></button>
+  </div>
+  <div class="modal-body">
+    <div class="small text-secondary text-uppercase mb-2">Corsa · tocca per registrare</div>
+    <div class="d-flex flex-column gap-2 mb-4">
+      ${RUN_SESSIONS.map((s) => {
+        const done = state.log.some(
+          (l) => l.type === "run" && l.label === s.title && l.date === todayK,
+        );
+        return `
+      <button class="quick-log-tile ${done ? "done" : ""}" ${done ? "disabled" : ""} onclick="quickLogRun('${s.title.replace(/'/g, "\\'")}', '${s.day.replace(/'/g, "\\'")}')">
+        <div class="qlt-icon"><i class="bi ${s.icon}"></i></div>
+        <div class="flex-grow-1">
+          <div class="fw-bold">${s.title}</div>
+          <div class="small text-secondary">${s.zone} · ${s.duration}</div>
+        </div>
+        ${done ? '<i class="bi bi-check-circle-fill text-success fs-5"></i>' : '<i class="bi bi-chevron-right text-secondary"></i>'}
+      </button>`;
+      }).join("")}
+    </div>
+
+    <div class="small text-secondary text-uppercase mb-2">Forza · sessione di oggi</div>
+    ${
+      day.patterns.length
+        ? `
+    <button class="quick-log-tile strength" onclick="closeModal(); openDay(${tIdx})">
+      <div class="qlt-icon"><i class="bi bi-lightning-charge-fill"></i></div>
+      <div class="flex-grow-1">
+        <div class="fw-bold">${esc(day.title)}</div>
+        <div class="small text-secondary">${strengthDone ? "Già completata oggi · rivedi" : "Tocca per aprire il tracker set-by-set"}</div>
+      </div>
+      ${strengthDone ? '<i class="bi bi-check-circle-fill text-success fs-5"></i>' : '<i class="bi bi-chevron-right text-secondary"></i>'}
+    </button>`
+        : `
+    <div class="text-secondary small">Oggi non è prevista una sessione di forza (${esc(day.title)}).</div>`
+    }
+  </div>`;
+}
+
+function openQuickLog() {
+  openModal(quickLogSheet());
+}
+
+// ===== MENU COMPLETO (mobile) =====
+// La bottom nav mostra solo 4 scorciatoie dirette; questo foglio dà
+// accesso rapido a TUTTE le sezioni dell'app, organizzate per
+// categoria, cosicché nessuna pagina resti "nascosta" su schermi
+// piccoli dove la sidebar non è visibile.
+function openFullMenu() {
+  const groups = [
+    {
+      title: "Percorso",
+      items: [
+        { id: "dashboard", label: "Dashboard", icon: "speedometer2" },
+        {
+          id: "assessment",
+          label: "Assessment",
+          icon: "clipboard-check",
+        },
+        { id: "mesociclo", label: "Mesociclo", icon: "calendar3" },
+        { id: "retest", label: "Re-test", icon: "arrow-repeat" },
+      ],
+    },
+    {
+      title: "Allenamento",
+      items: [
+        { id: "workout", label: "Allenamento", icon: "lightning-charge" },
+        { id: "library", label: "Libreria", icon: "journal-bookmark" },
+        { id: "core", label: "Core", icon: "shield-shaded" },
+        { id: "prevenzione", label: "Prevenzione", icon: "bandaid" },
+      ],
+    },
+    {
+      title: "Corsa & Cardio",
+      items: [
+        { id: "corsa", label: "Corsa", icon: "map" },
+        { id: "cardio", label: "Cardio & Zone", icon: "heart-pulse" },
+      ],
+    },
+    {
+      title: "Salute & Progressi",
+      items: [
+        { id: "recupero", label: "Recupero", icon: "battery-charging" },
+        { id: "progressi", label: "Peso & Foto", icon: "camera" },
+        {
+          id: "statistiche",
+          label: "Statistiche",
+          icon: "bar-chart-line",
+        },
+      ],
+    },
+    {
+      title: "Altro",
+      items: [{ id: "settings", label: "Impostazioni", icon: "gear" }],
+    },
+  ];
+
+  openModal(`
+  <div class="modal-header border-secondary">
+    <h5 class="modal-title"><i class="bi bi-grid-3x3-gap-fill text-info me-2"></i>Tutte le sezioni</h5>
+    <button type="button" class="btn-close btn-close-white" onclick="closeModal()"></button>
+  </div>
+  <div class="modal-body">
+    ${groups
+      .map(
+        (g) => `
+    <div class="mb-4">
+      <div class="small text-secondary text-uppercase mb-2">${g.title}</div>
+      <div class="menu-grid">
+        ${g.items
+          .map(
+            (it) => `
+        <button class="menu-tile ${state.activePage === it.id ? "active" : ""}" onclick="closeModal(); route('${it.id}')">
+          <i class="bi bi-${it.icon}"></i>
+          <span>${it.label}</span>
+        </button>`,
+          )
+          .join("")}
+      </div>
+    </div>`,
+      )
+      .join("")}
+  </div>`);
+}
+
+function quickLogRun(category, dayLabel) {
+  logRun(category, dayLabel);
+  openModal(quickLogSheet());
+}
+
+render();
+updateSaveIndicator("ok");
+hydrateFromNativeStorage();
+CloudSync.init();
+
+async function hydrateFromNativeStorage() {
+  if (!NativeStorage.isNative()) return;
+  try {
+    const native = await NativeStorage.read();
+    if (native && native.lastSavedAt) {
+      // il file nativo è la fonte di verità più duratura: se più
+      // recente (o se localStorage è vuoto/più vecchio) lo adottiamo
+      const localTime = state.lastSavedAt
+        ? new Date(state.lastSavedAt).getTime()
+        : 0;
+      const nativeTime = new Date(native.lastSavedAt).getTime();
+      if (nativeTime >= localTime) {
+        Object.keys(DEFAULT_STATE).forEach((k) => delete state[k]);
+        Object.assign(state, clone(DEFAULT_STATE), native, {
+          _storageVersion: STORAGE_VERSION,
+        });
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        render();
+      }
+    } else if (state.lastSavedAt) {
+      // primo avvio nativo: non c'è ancora il file, lo creiamo dai
+      // dati locali esistenti così da avere subito una copia persistente
+      NativeStorage.write(state).catch(() => {});
+    }
+  } catch (e) {
+    console.error("Hydration da storage nativo fallita", e);
+  }
+}
