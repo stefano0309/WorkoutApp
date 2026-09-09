@@ -1,0 +1,98 @@
+/* UI-04 Interaction States — shared visual language for transient and persistent control states. */
+
+:root {
+  --hts-state-hover-bg: color-mix(in srgb, var(--hts-primary) 12%, transparent);
+  --hts-state-active-bg: color-mix(in srgb, var(--hts-primary) 20%, transparent);
+  --hts-state-disabled-opacity: 0.52;
+  --hts-state-loading-opacity: 0.72;
+  --hts-state-error: var(--hts-danger);
+  --hts-state-success: var(--hts-success);
+}
+
+/* Interactive controls: hover, keyboard focus and pressed feedback remain distinct. */
+:where(button, a.btn, .btn, [role="button"], .quick-link-pill, .bottom-nav-item, .checklist-pill) {
+  transition:
+    background-color var(--hts-duration-fast) var(--hts-ease-standard),
+    border-color var(--hts-duration-fast) var(--hts-ease-standard),
+    color var(--hts-duration-fast) var(--hts-ease-standard),
+    opacity var(--hts-duration-fast) var(--hts-ease-standard),
+    transform var(--hts-duration-fast) var(--hts-ease-standard),
+    box-shadow var(--hts-duration-fast) var(--hts-ease-standard);
+}
+
+:where(button, a.btn, .btn, [role="button"], .quick-link-pill, .bottom-nav-item, .checklist-pill):not(:disabled):not([aria-disabled="true"]):hover {
+  background-color: var(--hts-state-hover-bg);
+}
+
+:where(button, a.btn, .btn, [role="button"], .quick-link-pill, .bottom-nav-item, .checklist-pill):not(:disabled):not([aria-disabled="true"]):active,
+:where(button, a.btn, .btn, [role="button"], .quick-link-pill, .bottom-nav-item, .checklist-pill)[aria-pressed="true"],
+:where(button, a.btn, .btn, [role="button"], .quick-link-pill, .bottom-nav-item, .checklist-pill).active {
+  background-color: var(--hts-state-active-bg);
+  transform: translateY(1px);
+}
+
+:where(button, a.btn, .btn, [role="button"])[aria-disabled="true"],
+:where(button, a.btn, .btn, [role="button"]):disabled {
+  opacity: var(--hts-state-disabled-opacity);
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Explicit transient states can be applied without coupling presentation to business logic. */
+[data-state="loading"],
+.is-loading,
+[aria-busy="true"] {
+  opacity: var(--hts-state-loading-opacity);
+  cursor: progress;
+  pointer-events: none;
+}
+
+[data-state="loading"]::after,
+.is-loading::after {
+  content: "";
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin-inline-start: 0.5em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  vertical-align: -0.1em;
+  animation: hts-state-spin 700ms linear infinite;
+}
+
+[data-state="success"],
+.is-success {
+  border-color: color-mix(in srgb, var(--hts-state-success) 70%, var(--hts-border));
+}
+
+[data-state="error"],
+.is-error {
+  border-color: color-mix(in srgb, var(--hts-state-error) 75%, var(--hts-border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--hts-state-error) 22%, transparent);
+}
+
+[data-state="empty"],
+.is-empty {
+  min-height: 4rem;
+  border: 1px dashed var(--hts-border);
+  color: var(--hts-muted);
+}
+
+/* Invalid form controls get a visible error state while preserving browser semantics. */
+:where(input, select, textarea)[aria-invalid="true"] {
+  border-color: var(--hts-state-error);
+  box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--hts-state-error) 16%, transparent);
+}
+
+@keyframes hts-state-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-state="loading"]::after,
+  .is-loading::after {
+    animation: none;
+  }
+}
