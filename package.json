@@ -3,7 +3,8 @@
     "audit:storage": "node scripts/audit-storage-access.mjs",
     "test:frontend": "node --test tests/frontend/*.test.mjs",
     "test:a11y": "node --test tests/frontend/accessibility.test.mjs",
-    "test:micro-interactions": "node --test tests/frontend/micro-interactions.test.mjs"
+    "test:micro-interactions": "node --test tests/frontend/micro-interactions.test.mjs",
+    "test:save-feedback": "node --test tests/frontend/save-feedback.test.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.0",
