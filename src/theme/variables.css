@@ -8,6 +8,7 @@
   --hts-success: #35d07f;
   --hts-success-contrast: #08240f;
   --hts-danger: #dc3545;
+  --hts-on-light: #14183a;
 
   /* Surfaces and content */
   --hts-background: #0b1020;
@@ -35,6 +36,7 @@
   /* Shape and spacing */
   --hts-radius-card: 16px;
   --hts-radius-card-lg: 24px;
+  --hts-radius-xl: 26px;
   --hts-radius-control: 12px;
   --hts-radius-pill: 999px;
   --hts-space-1: 8px;
