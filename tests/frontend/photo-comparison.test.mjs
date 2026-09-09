@@ -35,7 +35,10 @@ test('PhotoComparison exposes an accessible keyboard slider', () => {
   assert.match(component, /aria-valuemin=\{0\}/);
   assert.match(component, /aria-valuemax=\{100\}/);
   assert.match(component, /aria-valuenow=\{position\}/);
-  assert.match(component, /focus-visible/);
+});
+
+test('PhotoComparison provides visible focus styling for keyboard users', () => {
+  assert.match(css, /\.photo-comparison__slider:focus-visible/);
 });
 
 test('PhotoComparison disables comparison controls when a usable pair is unavailable', () => {
