@@ -1,0 +1,95 @@
+/* UI-05 — Micro-interactions
+ * Shared, low-noise feedback primitives. Keep motion semantic and optional.
+ */
+
+button,
+a,
+[role="button"],
+.quick-link-pill,
+.bottom-nav-item,
+.checklist-pill,
+.hero-icon-btn,
+.bell-btn {
+  transition: var(--hts-transition-color), var(--hts-transition-surface);
+}
+
+button:not(:disabled):not([aria-disabled="true"]):hover,
+a:hover,
+[role="button"]:hover {
+  transform: translateY(-1px);
+}
+
+button:not(:disabled):not([aria-disabled="true"]):active,
+a:active,
+[role="button"]:active,
+[aria-pressed="true"] {
+  transform: translateY(0) scale(0.98);
+}
+
+.card-custom,
+.set-card,
+.strava-activity-card,
+.progress-ring-card {
+  transition: var(--hts-transition-surface);
+}
+
+.card-custom:hover,
+.strava-activity-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--hts-shadow-md);
+}
+
+.is-loading,
+[data-state="loading"],
+[aria-busy="true"] {
+  cursor: progress;
+}
+
+.is-loading::after,
+[data-state="loading"]::after,
+[aria-busy="true"]::after {
+  content: "";
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  margin-left: 0.5em;
+  vertical-align: -0.12em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: hts-spin var(--hts-duration-emphasis) linear infinite;
+}
+
+@keyframes hts-spin {
+  to { transform: rotate(360deg); }
+}
+
+[data-feedback="success"],
+.feedback-success {
+  animation: hts-feedback-success var(--hts-duration-state) var(--hts-ease-emphasized);
+}
+
+[data-feedback="error"],
+.feedback-error {
+  animation: hts-feedback-error var(--hts-duration-state) var(--hts-ease-emphasized);
+}
+
+@keyframes hts-feedback-success {
+  50% { transform: scale(1.015); }
+}
+
+@keyframes hts-feedback-error {
+  25% { transform: translateX(-3px); }
+  50% { transform: translateX(3px); }
+  75% { transform: translateX(-2px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}

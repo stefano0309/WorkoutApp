@@ -15,6 +15,7 @@
     />
     <link rel="stylesheet" href="index.css">
     <link rel="stylesheet" href="accessibility.css">
+    <link rel="stylesheet" href="micro-interactions.css">
   </head>
   <body>
     <a class="skip-link" href="#app">Vai al contenuto principale</a>
@@ -96,35 +97,12 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 
-    <!--
-      Integrazione Firebase (Auth Google + Realtime Database).
-      Usa la sintassi modulare v9+: va caricata come modulo a parte perché
-      "import" non è disponibile negli script classici usati dal resto
-      dell'app. Espone un'API minima su window.__fb, consumata dall'oggetto
-      CloudSync nello script principale qui sotto.
-    -->
+    <!-- Firebase -->
     <script type="module">
       import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
-      import {
-        getAnalytics,
-        isSupported as analyticsIsSupported,
-      } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-analytics.js";
-      import {
-        getAuth,
-        GoogleAuthProvider,
-        signInWithPopup,
-        onAuthStateChanged,
-        signOut,
-      } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
-      import {
-        getDatabase,
-        ref,
-        set,
-        get,
-        update,
-        onValue,
-        off,
-      } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-database.js";
+      import { getAnalytics, isSupported as analyticsIsSupported } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-analytics.js";
+      import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
+      import { getDatabase, ref, set, get, onValue, off } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-database.js";
 
       const firebaseConfig = {
         apiKey: "AIzaSyCD7WjWdH_dDjUbfAs-xuMQHC8NWL8KYqQ",
@@ -137,71 +115,30 @@
       };
 
       const app = initializeApp(firebaseConfig);
-      analyticsIsSupported()
-        .then((ok) => {
-          if (ok) getAnalytics(app);
-        })
-        .catch(() => {});
-
+      analyticsIsSupported().then((ok) => { if (ok) getAnalytics(app); }).catch(() => {});
       const auth = getAuth(app);
       const db = getDatabase(app);
       const provider = new GoogleAuthProvider();
+      const isNativeShell = () => !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 
-      const isNativeShell = () =>
-        !!(
-          window.Capacitor &&
-          window.Capacitor.isNativePlatform &&
-          window.Capacitor.isNativePlatform()
-        );
-
-      // API minima esposta allo script "classico" principale dell'app.
       window.__fb = {
         async signIn() {
-          if (isNativeShell()) {
-            // Il popup OAuth di Google non funziona in modo affidabile
-            // dentro una WebView nativa Capacitor (Google blocca i
-            // login da "embedded user agent" per policy di sicurezza).
-            // Per l'app Android/iOS reale serve il plugin nativo
-            // @capacitor-firebase/authentication: vedi la guida fornita.
-            throw new Error("native-google-signin-not-configured");
-          }
-          const res = await signInWithPopup(auth, provider);
-          return res.user;
+          if (isNativeShell()) throw new Error("native-google-signin-not-configured");
+          const res = await signInWithPopup(auth, provider); return res.user;
         },
-        signOutUser() {
-          return signOut(auth);
-        },
-        onAuthChange(cb) {
-          return onAuthStateChanged(auth, cb);
-        },
-        async readState(uid) {
-          const snap = await get(ref(db, "users/" + uid + "/state"));
-          return snap.exists() ? snap.val() : null;
-        },
-        writeState(uid, data) {
-          return set(ref(db, "users/" + uid + "/state"), data);
-        },
-        watchState(uid, cb) {
-          const r = ref(db, "users/" + uid + "/state");
-          onValue(r, (snap) => cb(snap.exists() ? snap.val() : null));
-          return () => off(r);
-        },
-        async readUsername(uid) {
-          const snap = await get(ref(db, "users/" + uid + "/profile/username"));
-          return snap.exists() ? snap.val() : null;
-        },
+        signOutUser() { return signOut(auth); },
+        onAuthChange(cb) { return onAuthStateChanged(auth, cb); },
+        async readState(uid) { const snap = await get(ref(db, "users/" + uid + "/state")); return snap.exists() ? snap.val() : null; },
+        writeState(uid, data) { return set(ref(db, "users/" + uid + "/state"), data); },
+        watchState(uid, cb) { const r = ref(db, "users/" + uid + "/state"); onValue(r, (snap) => cb(snap.exists() ? snap.val() : null)); return () => off(r); },
+        async readUsername(uid) { const snap = await get(ref(db, "users/" + uid + "/profile/username")); return snap.exists() ? snap.val() : null; },
         async claimUsername(uid, username) {
           const key = username.trim().toLowerCase().replace(/\s+/g, "_");
           if (!key) throw new Error("empty-username");
           const takenSnap = await get(ref(db, "usernames/" + key));
-          if (takenSnap.exists() && takenSnap.val() !== uid) {
-            throw new Error("username-taken");
-          }
+          if (takenSnap.exists() && takenSnap.val() !== uid) throw new Error("username-taken");
           await set(ref(db, "usernames/" + key), uid);
-          await set(
-            ref(db, "users/" + uid + "/profile/username"),
-            username.trim(),
-          );
+          await set(ref(db, "users/" + uid + "/profile/username"), username.trim());
           return username.trim();
         },
       };
