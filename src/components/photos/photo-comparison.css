@@ -90,6 +90,7 @@
   transform: translateX(-1px);
   background: var(--hts-text);
   pointer-events: none;
+  transition: left var(--hts-duration-normal) var(--hts-ease-standard);
 }
 
 .photo-comparison__metadata {
