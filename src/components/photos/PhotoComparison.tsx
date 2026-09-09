@@ -27,11 +27,7 @@ function formatDate(date: string) {
 }
 
 function formatContext(photo: ComparableProgressPhoto) {
-  const details = [
-    formatDate(photo.date),
-    photo.session?.trim(),
-  ].filter(Boolean);
-
+  const details = [formatDate(photo.date), photo.session?.trim()].filter(Boolean);
   return details.join(' · ');
 }
 
@@ -78,6 +74,7 @@ export function PhotoComparison({
   const [beforeError, setBeforeError] = useState(false);
   const [afterError, setAfterError] = useState(false);
   const hasPair = Boolean(before?.thumb && after?.thumb);
+  const hasUsablePair = hasPair && !beforeError && !afterError;
 
   if (!before && !after) {
     return (
@@ -116,7 +113,7 @@ export function PhotoComparison({
             onError={() => setBeforeError(true)}
           />
         </div>
-        {hasPair ? (
+        {hasUsablePair ? (
           <div className="photo-comparison__divider" style={{ left: `${position}%` }} aria-hidden="true" />
         ) : null}
       </div>
@@ -143,7 +140,7 @@ export function PhotoComparison({
         max="100"
         step="1"
         value={position}
-        disabled={!hasPair}
+        disabled={!hasUsablePair}
         aria-label="Posizione confronto tra prima e dopo"
         aria-valuemin={0}
         aria-valuemax={100}
