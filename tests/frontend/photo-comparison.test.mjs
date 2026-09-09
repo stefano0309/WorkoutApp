@@ -13,6 +13,14 @@ test('PhotoComparison renders two progress images with meaningful alt text', () 
   assert.match(component, /decoding="async"/);
 });
 
+test('PhotoComparison supports loading/error and missing-photo states', () => {
+  assert.match(component, /Caricamento foto…/);
+  assert.match(component, /onLoad=\{onLoad\}/);
+  assert.match(component, /onError=\{onError\}/);
+  assert.match(component, /Foto non disponibile/);
+  assert.match(component, /Aggiungi due foto di progresso per iniziare il confronto/);
+});
+
 test('PhotoComparison supports date and optional session metadata', () => {
   assert.match(component, /session\?: string \| null/);
   assert.match(component, /formatContext/);
@@ -30,16 +38,14 @@ test('PhotoComparison exposes an accessible keyboard slider', () => {
   assert.match(component, /focus-visible/);
 });
 
-test('PhotoComparison handles missing photos without crashing', () => {
-  assert.match(component, /Aggiungi due foto di progresso per iniziare il confronto/);
-  assert.match(component, /Foto non disponibile/);
-  assert.match(component, /disabled=\{!hasPair\}/);
+test('PhotoComparison disables comparison controls when a usable pair is unavailable', () => {
+  assert.match(component, /const hasUsablePair = hasPair && !beforeError && !afterError/);
+  assert.match(component, /disabled=\{!hasUsablePair\}/);
 });
 
-test('PhotoComparison handles image errors and uses an accessible live status', () => {
-  assert.match(component, /onError=\{\(\) => setBeforeError\(true\)\}/);
-  assert.match(component, /onError=\{\(\) => setAfterError\(true\)\}/);
+test('PhotoComparison exposes live status for assistive technology', () => {
   assert.match(component, /role="status" aria-live="polite"/);
+  assert.match(component, /Mostrata la foto Prima al \{position\}%/);
 });
 
 test('PhotoComparison uses the existing ProgressPhoto DTO contract', () => {
