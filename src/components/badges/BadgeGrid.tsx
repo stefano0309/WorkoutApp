@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { BadgeConditionContext, UnlockedBadge } from '../../types/badge.types';
 import { getBadgeState } from '../../services/badgeEngine.service';
+import './badge-grid.css';
 
 export type BadgeGridProps = {
   context: BadgeConditionContext;
