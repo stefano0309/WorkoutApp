@@ -62,7 +62,100 @@
     main.focus({ preventScroll: true });
   };
 
+  const initSaveFeedback = () => {
+    const status = document.getElementById('saveStatus');
+    if (!status || status.dataset.saveFeedbackReady === 'true') return;
+
+    status.dataset.saveFeedbackReady = 'true';
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    status.setAttribute('aria-atomic', 'true');
+
+    const baseClasses = 'badge w-100 mt-2 py-2';
+    const states = {
+      saving: {
+        text: 'Salvataggio in corso…',
+        classes: `${baseClasses} bg-warning bg-opacity-25 text-warning border border-warning`,
+        busy: 'true',
+      },
+      saved: {
+        classes: `${baseClasses} bg-success bg-opacity-25 text-success border border-success`,
+        busy: 'false',
+      },
+      error: {
+        text: 'Salvataggio: errore',
+        classes: `${baseClasses} bg-danger bg-opacity-25 text-danger border border-danger`,
+        busy: 'false',
+      },
+    };
+
+    const setState = (name, text) => {
+      const next = states[name];
+      if (!next) return;
+      status.className = next.classes;
+      status.setAttribute('aria-busy', next.busy);
+      if (typeof text === 'string' && status.textContent !== text) {
+        status.textContent = text;
+      }
+      status.dataset.saveState = name;
+    };
+
+    window.__htsSaveFeedback = {
+      setState,
+      saving() {
+        setState('saving');
+      },
+      saved(timeLabel) {
+        const text = timeLabel ? `Salvato ${timeLabel}` : 'Salvato';
+        setState('saved', text);
+      },
+      error() {
+        setState('error');
+      },
+    };
+
+    if (!window.__htsSaveFeedbackStoragePatched) {
+      window.__htsSaveFeedbackStoragePatched = true;
+      const originalSetItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (key, value) {
+        if (key === 'hybridTrainingSystem') {
+          window.__htsSaveFeedback?.saving();
+        }
+        return originalSetItem.call(this, key, value);
+      };
+    }
+
+    const initialText = status.textContent.trim();
+    if (initialText.startsWith('Salvato ')) {
+      setState('saved', initialText);
+    } else if (initialText === 'Salvataggio: errore') {
+      setState('error');
+    }
+  };
+
+  const enhanceSaveFeedback = () => {
+    initSaveFeedback();
+    const status = document.getElementById('saveStatus');
+    if (!status || typeof window.updateSaveIndicator !== 'function' || window.__htsSaveIndicatorWrapped) return;
+
+    const original = window.updateSaveIndicator;
+    window.updateSaveIndicator = (saveState) => {
+      if (saveState === 'error') {
+        window.__htsSaveFeedback?.error();
+      } else if (saveState === 'ok') {
+        const savedAt = typeof window.state !== 'undefined' ? window.state?.lastSavedAt : null;
+        const label = savedAt
+          ? new Date(savedAt).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
+          : '';
+        window.__htsSaveFeedback?.saved(label);
+      }
+      original(saveState);
+    };
+    window.__htsSaveIndicatorWrapped = true;
+  };
+
   enhance();
+  enhanceSaveFeedback();
 
   const observer = new MutationObserver((mutations) => {
     let contentChanged = false;
@@ -74,6 +167,7 @@
         }
       });
     }
+    enhanceSaveFeedback();
     if (contentChanged) queueMicrotask(focusMainAfterNavigation);
   });
   observer.observe(document.body, { childList: true, subtree: true });
