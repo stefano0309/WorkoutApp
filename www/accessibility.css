@@ -1,0 +1,55 @@
+/* UI-03 Accessibility — shared focus, motion and assistive-technology primitives. */
+
+.skip-link {
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 2000;
+  transform: translateY(-200%);
+  padding: 0.75rem 1rem;
+  border-radius: var(--hts-radius-control, 12px);
+  background: var(--hts-primary, #ff5a36);
+  color: var(--hts-primary-contrast, #fff);
+  font-weight: 700;
+  text-decoration: none;
+  box-shadow: var(--hts-shadow-md, 0 10px 30px rgba(0,0,0,.12));
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+:where(a, button, input, select, textarea, [tabindex]:not([tabindex='-1'])):focus-visible {
+  outline: 3px solid var(--hts-focus, #62d4ff);
+  outline-offset: 3px;
+}
+
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+}
+
+.visually-hidden-focusable:not(:focus):not(:focus-within) {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}
