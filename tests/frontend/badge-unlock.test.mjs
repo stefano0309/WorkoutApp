@@ -15,7 +15,7 @@ test('badge unlock feedback is an accessible live region', () => {
 });
 
 test('badge unlock feedback is non-blocking and dismissible', () => {
-  assert.match(component, /onDismiss\?\(\)/);
+  assert.match(component, /onDismiss\?\.\(\)/);
   assert.match(component, /setTimeout/);
   assert.match(component, /aria-label="Chiudi notifica badge"/);
 });
