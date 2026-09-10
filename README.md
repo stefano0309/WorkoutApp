@@ -77,6 +77,10 @@ npx cap run android
 
 Per Health Connect, l'utente deve concedere i permessi dall'interfaccia Android. Su Android 14+ Health Connect è integrato nel sistema; sui dispositivi meno recenti può essere necessario installare l'app Health Connect.
 
+## Design system
+
+La documentazione operativa dei token, delle gerarchie, degli stati interattivi, dell'accessibilità e delle regole di motion è disponibile in [`docs/DESIGN-SYSTEM.md`](docs/DESIGN-SYSTEM.md). La fonte canonica dei token resta `src/theme/variables.css`.
+
 ## Roadmap implementata
 
 1. Health Connect & analisi corsa
