@@ -16,6 +16,7 @@
     <link rel="stylesheet" href="index.css">
     <link rel="stylesheet" href="accessibility.css">
     <link rel="stylesheet" href="micro-interactions.css">
+    <link rel="stylesheet" href="dashboard-cognitive-load.css">
   </head>
   <body>
     <a class="skip-link" href="#app">Vai al contenuto principale</a>
@@ -159,11 +160,6 @@
       window.__fb = {
         async signIn() {
           if (isNativeShell()) {
-            // Il popup OAuth di Google non funziona in modo affidabile
-            // dentro una WebView nativa Capacitor (Google blocca i
-            // login da "embedded user agent" per policy di sicurezza).
-            // Per l'app Android/iOS reale serve il plugin nativo
-            // @capacitor-firebase/authentication: vedi la guida fornita.
             throw new Error("native-google-signin-not-configured");
           }
           const res = await signInWithPopup(auth, provider);
@@ -211,5 +207,6 @@
 
     <script src="index.js"></script>
     <script src="accessibility-runtime.js"></script>
+    <script src="dashboard-cognitive-load.js"></script>
   </body>
 </html>
