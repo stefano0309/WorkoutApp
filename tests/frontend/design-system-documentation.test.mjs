@@ -16,7 +16,8 @@ test('UI-12 documents the canonical token source', () => {
 
 test('UI-12 documents interaction and accessibility contracts', () => {
   assert.match(docs, /focus-visible/);
-  assert.match(docs, /details\/summary/);
+  assert.match(docs, /<details>/);
+  assert.match(docs, /<summary>/);
   assert.match(docs, /44px/);
   assert.match(docs, /prefers-reduced-motion/);
   assert.match(docs, /default/);
