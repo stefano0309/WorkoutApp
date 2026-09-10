@@ -19,7 +19,7 @@ test('UI-11 removes duplicated today activity from the initial dashboard view', 
 
 test('UI-11 collapses the weekly microcycle details by default', () => {
   assert.match(layer, /Microciclo Settimana/);
-  assert.match(layer, /<details/);
+  assert.match(layer, /document\.createElement\("details"\)/);
   assert.match(layer, /Piano settimanale/);
 });
 
