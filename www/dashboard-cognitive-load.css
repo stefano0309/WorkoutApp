@@ -1,0 +1,77 @@
+/* UI-11 — Dashboard cognitive-load layer.
+ * Uses the existing HTS token system and keeps the legacy dashboard structure intact.
+ */
+
+.dashboard-details {
+  margin-top: var(--hts-space-2);
+  padding: var(--hts-space-2);
+  border: 1px solid var(--hts-border);
+  border-radius: var(--hts-radius-card);
+  background: var(--hts-surface);
+}
+
+.dashboard-details > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--hts-space-2);
+  min-height: 44px;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 700;
+}
+
+.dashboard-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.dashboard-details > summary::after {
+  content: "›";
+  flex: 0 0 auto;
+  font-size: 1.25rem;
+  transform: rotate(90deg);
+  transition: transform var(--hts-duration-fast) var(--hts-ease-standard);
+}
+
+.dashboard-details[open] > summary::after {
+  transform: rotate(-90deg);
+}
+
+.dashboard-details > summary:focus-visible {
+  outline: 3px solid var(--hts-focus);
+  outline-offset: 3px;
+  border-radius: var(--hts-radius-control);
+}
+
+.dashboard-details__content {
+  padding-top: var(--hts-space-1);
+}
+
+.dashboard-primary-action {
+  min-height: 44px;
+  font-weight: 700;
+}
+
+.hero-card-blue .dashboard-primary-action {
+  box-shadow: var(--hts-shadow-sm);
+}
+
+@media (max-width: 600px) {
+  .dashboard-details {
+    margin-inline: 0;
+  }
+
+  .dashboard-details > summary {
+    align-items: flex-start;
+  }
+
+  .dashboard-details > summary .text-secondary {
+    text-align: right;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-details > summary::after {
+    transition: none;
+  }
+}
