@@ -47,9 +47,6 @@
       button.setAttribute("type", "button");
     });
 
-    const app = root.querySelector("main");
-    if (app) app.setAttribute("aria-label", "Dashboard operativo");
-
     return root.textContent ? template.innerHTML : originalDashboard();
   }
 
